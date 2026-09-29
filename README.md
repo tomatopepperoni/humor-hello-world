@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# humor-hello-world
 
-## Getting Started
+Weekly assignment app for COMS 6998 *Design for Generative AI* (Fall 2026).
+Next.js (App Router) + Supabase, deployed on Vercel.
 
-First, run the development server:
+| Week | What was added |
+|------|----------------|
+| 1 | Hello World page, Vercel deploy |
+| 2 | Supabase `jokes` table, `/jokes` list page |
+| 3 | Google login (Supabase Auth), `profiles` table + trigger, onboarding, `/profile` with photo upload, protected `/jokes` route |
+
+## Running locally
 
 ```bash
+npm install
+cp .env.example .env.local   # fill in the two Supabase values
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Week 3 – Auth setup checklist
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Everything below is one-time configuration in Supabase / Google Cloud / Vercel.
+The code is already in this repo.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Database & storage (Supabase → SQL editor)
 
-## Learn More
+Run [`supabase/week3_auth.sql`](supabase/week3_auth.sql). It creates:
 
-To learn more about Next.js, take a look at the following resources:
+- `public.profiles` (`id` → `auth.users`, `email`, nullable `first_name` / `last_name`, `avatar_url`, `bio`)
+- the `on_auth_user_created` trigger that inserts a profile row for every new user
+- a public `avatars` storage bucket (5 MB, images only) with policies so users can upload into their own folder
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Photos are stored in the bucket; only the URL goes into `profiles.avatar_url`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2. Google OAuth client (Google Cloud Console)
 
-## Deploy on Vercel
+1. APIs & Services → Credentials → **Create credentials → OAuth client ID** (type: *Web application*).
+   If asked, configure the OAuth consent screen first (External, add your email as a test user).
+2. **Authorized JavaScript origins**: `https://<your-vercel-domain>` and `http://localhost:3000`.
+3. **Authorized redirect URIs**: `https://<PROJECT_REF>.supabase.co/auth/v1/callback`
+   (copy the exact value from Supabase → Authentication → Providers → Google → "Callback URL").
+4. Copy the Client ID and Client secret.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 3. Supabase Auth
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Authentication → **Providers → Google**: enable, paste Client ID / secret, save.
+2. Authentication → **URL Configuration**:
+   - Site URL: `https://<your-vercel-domain>`
+   - Redirect URLs: add
+     - `https://<your-vercel-domain>/auth/callback`
+     - `https://*-<team>.vercel.app/auth/callback` (so preview/commit URLs work)
+     - `http://localhost:3000/auth/callback`
+
+The app always redirects to **`/auth/callback`** with no extra query params other than the `code` Supabase appends, as the assignment requires.
+
+### 4. Vercel
+
+- Environment variables (already set from week 2): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Settings → **Deployment Protection → Off**, so the page opens in Incognito.
+- Submit the **commit-specific** deployment URL.
+
+## How auth works in the code
+
+| File | Role |
+|------|------|
+| `lib/supabase/client.ts` | browser client (`@supabase/ssr` `createBrowserClient`) |
+| `lib/supabase/server.ts` | server client bound to Next cookies |
+| `lib/supabase/proxy.ts` + `proxy.ts` | refreshes the session on every request; redirects logged-out users away from `/jokes`, `/profile`, `/onboarding`, and users without a first/last name to `/onboarding` |
+| `app/auth/callback/route.ts` | exchanges the OAuth `code` for a session cookie |
+| `app/login` | "Continue with Google" button (`signInWithOAuth`) |
+| `app/onboarding` | asks for first / last name on first login (prefilled from Google) |
+| `app/profile` | edit name, bio, upload photo (browser → Storage, URL → `profiles`) |
+| `app/actions/profile.ts` | server actions: `updateProfile`, `setAvatarUrl`, `signOut` |
+| `app/page.tsx` | gated UI: different content for logged-in vs anonymous visitors |
+| `app/jokes` | protected route (login required) |
