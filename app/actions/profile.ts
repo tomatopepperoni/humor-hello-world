@@ -32,12 +32,26 @@ export async function updateProfile(
     return { error: "First name and last name are both required." };
   }
 
-  const { error } = await supabase
+  // Upsert (not update): if the auth.users trigger didn't create a row for
+  // this user, a plain update would silently affect 0 rows.
+  const { data, error } = await supabase
     .from("profiles")
-    .update({ first_name, last_name, bio, updated_at: new Date().toISOString() })
-    .eq("id", user.id);
+    .upsert(
+      {
+        id: user.id,
+        email: user.email ?? null,
+        first_name,
+        last_name,
+        bio,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    )
+    .select("id")
+    .maybeSingle();
 
   if (error) return { error: error.message };
+  if (!data) return { error: "Profile could not be saved. Please try again." };
 
   revalidatePath("/", "layout");
   if (next) redirect(next);
@@ -54,8 +68,15 @@ export async function setAvatarUrl(avatar_url: string): Promise<ProfileFormState
 
   const { error } = await supabase
     .from("profiles")
-    .update({ avatar_url, updated_at: new Date().toISOString() })
-    .eq("id", user.id);
+    .upsert(
+      {
+        id: user.id,
+        email: user.email ?? null,
+        avatar_url,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
 
   if (error) return { error: error.message };
   revalidatePath("/", "layout");
