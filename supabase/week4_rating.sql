@@ -106,7 +106,18 @@ alter table public.captions enable row level security;
 alter table public.votes    enable row level security;
 
 -- jokes: the /jokes page is login-only, so only authenticated users can read.
-drop policy if exists "jokes readable by members" on public.jokes;
+-- Week 2 created a permissive "read for everyone" policy; policies are OR-ed,
+-- so it has to go or anon could still read the table.
+do $$
+declare p record;
+begin
+  for p in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'jokes'
+  loop
+    execute format('drop policy if exists %I on public.jokes', p.policyname);
+  end loop;
+end $$;
 create policy "jokes readable by members"
   on public.jokes for select to authenticated
   using (true);
