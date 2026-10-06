@@ -6,10 +6,10 @@ import "server-only";
  *
  * Env:
  *   GEMINI_API_KEY   required (https://aistudio.google.com/apikey – free tier)
- *   GEMINI_MODEL     optional, defaults to gemini-2.5-flash
+ *   GEMINI_MODEL     optional, defaults to gemini-3.8-flash
  */
 
-export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
 type Part =
   | { text: string }

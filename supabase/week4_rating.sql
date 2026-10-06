@@ -34,7 +34,7 @@ create table if not exists public.captions (
   user_id     uuid not null references auth.users (id) on delete cascade,
   text        text not null,
   prompt      text not null,                          -- full prompt sent to the model (assignment requirement)
-  model       text not null,                          -- e.g. gemini-2.5-flash
+  model       text not null,                          -- e.g. gemini-3.8-flash
   position    smallint not null default 0,            -- order within the post (0,1,2)
   created_at  timestamptz not null default now()
 );
