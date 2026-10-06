@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { GEMINI_MODEL, GeminiError, generateText, parseCaptionList } from "@/lib/gemini";
+import { GeminiError, generateText, parseCaptionList } from "@/lib/gemini";
 import { VIBES, isVibe, todaysTheme } from "@/lib/vibes";
 
 export type GenerateState = { error?: string };
@@ -76,9 +76,11 @@ export async function generateCaptions(
   // 2. Ask Gemini.
   const prompt = buildPrompt({ vibe, context, hasImage: !!image, theme });
   let captions: string[];
+  let model: string;
   try {
-    const raw = await generateText(prompt, image);
-    captions = parseCaptionList(raw, CAPTIONS_PER_POST);
+    const result = await generateText(prompt, image);
+    model = result.model;
+    captions = parseCaptionList(result.text, CAPTIONS_PER_POST);
   } catch (err) {
     const msg = err instanceof GeminiError ? err.message : "The caption model is unavailable right now.";
     return { error: msg };
@@ -98,7 +100,7 @@ export async function generateCaptions(
       user_id: user.id,
       text,
       prompt,
-      model: GEMINI_MODEL,
+      model,
       position,
     }))
   );
