@@ -12,7 +12,7 @@ export default async function LoginPage({
     <main className="mx-auto flex max-w-md flex-1 flex-col justify-center p-8">
       <h1 className="text-3xl font-bold">Sign in</h1>
       <p className="mt-2 text-gray-600">
-        Log in to see the jokes and manage your profile.
+        Sign in to post photos, get AI captions and vote. Browsing is open to everyone.
       </p>
 
       {hadError && (

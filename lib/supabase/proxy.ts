@@ -2,12 +2,12 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /** Routes that require a logged-in user. */
-const PROTECTED_PREFIXES = ["/jokes", "/profile", "/onboarding"];
+const PROTECTED_PREFIXES = ["/jokes", "/profile", "/onboarding", "/create"];
 
 /**
  * Refreshes the Supabase session cookie on every request and enforces
  * route protection:
- *  - not logged in  -> protected routes redirect to /login
+ *  - not logged in  -> protected routes (/create, /jokes, /profile, /onboarding) redirect to /login
  *  - logged in, but no first/last name yet -> redirect to /onboarding
  */
 export async function updateSession(request: NextRequest) {
