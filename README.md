@@ -47,7 +47,7 @@ and the vote data tells you which prompt/vibe combinations actually land.
 - **Generate** (`/create`, login required): photo upload to a `photos` storage bucket
   (browser → Storage, own folder only) and/or a 200-char description, vibe, opt-in to
   today's theme. Server action `generateCaptions` downloads the image, calls Gemini
-  (`gemini-3.8-flash`, multimodal), parses a JSON array of 3 captions and inserts one
+  (`gemini-3.6-flash`, multimodal; falls back to 3.5-flash / 3.5-flash-lite when a model returns 503), parses a JSON array of 3 captions and inserts one
   `posts` row + three `captions` rows. **The full prompt and model name are saved on
   every caption row** and visible under "Prompt" on each post page.
 - **Vote** (`VoteButtons` → server action `vote`): inserts a row in `votes`

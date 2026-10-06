@@ -8,10 +8,18 @@ import "server-only";
  *   GEMINI_API_KEY   required (https://aistudio.google.com/apikey – free tier)
  *   GEMINI_MODEL     optional. One model, or a comma-separated list tried in
  *                    order when a model is overloaded (503/429) or missing (404).
- *                    Defaults to "gemini-3.8-flash,gemini-3.8-flash-lite".
+ *                    Defaults to gemini-3.6-flash → 3.5-flash → 3.5-flash-lite → 3.8-flash.
  */
 
-const DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-3.8-flash-lite"];
+// Order = measured on 2026-10-06 with a free-tier key: 3.6-flash answered in ~3 s,
+// 3.5-flash/lite in 1–3 s, while 3.7/3.8-flash returned 503 "high demand" every time.
+// Any of these can be overridden with GEMINI_MODEL=model1,model2,...
+const DEFAULT_MODELS = [
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
+];
 
 export const GEMINI_MODELS: string[] = (process.env.GEMINI_MODEL || DEFAULT_MODELS.join(","))
   .split(",")
@@ -124,6 +132,7 @@ export async function generateText(
   parts.push({ text: prompt });
 
   let lastError: GeminiError | undefined;
+  let firstError: GeminiError | undefined;
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       try {
@@ -132,15 +141,17 @@ export async function generateText(
       } catch (err) {
         const e = err instanceof GeminiError ? err : new GeminiError(String(err));
         lastError = e;
+        if (!firstError && e.status !== 404) firstError = e;
         if (e.status === 404) break; // model gone – try the next one
         if (e.status !== undefined && !RETRY_STATUSES.has(e.status)) throw e; // real error (400/403…)
         if (attempt < RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt]);
       }
     }
   }
+  const e = firstError ?? lastError;
   throw new GeminiError(
-    `${lastError?.message ?? "Gemini is unavailable."} — Google is under heavy load right now; please try again in a minute.`,
-    lastError?.status
+    `${e?.message ?? "Gemini is unavailable."} — tried ${GEMINI_MODELS.join(", ")}; Google is under heavy load right now, please try again in a minute.`,
+    e?.status
   );
 }
 
