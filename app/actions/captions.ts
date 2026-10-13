@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { GeminiError, generateText, parseCaptionList } from "@/lib/gemini";
 import { VIBES, isVibe, todaysTheme, type Vibe } from "@/lib/vibes";
 
-export type GenerateState = { error?: string };
+/** `busy`: Gemini was overloaded / rate-limited, so trying again shortly should work. */
+export type GenerateState = { error?: string; busy?: boolean };
 
 const CAPTIONS_PER_ROUND = 3;
 const MAX_CAPTIONS_PER_POST = 9;
@@ -50,7 +51,9 @@ async function askGemini(prompt: string, image?: { mimeType: string; base64: str
     return { captions: value, model };
   } catch (err) {
     const msg = err instanceof GeminiError ? err.message : "The caption model is unavailable right now.";
-    return { error: msg };
+    const status = err instanceof GeminiError ? err.status : undefined;
+    const busy = status === undefined || [408, 429, 500, 502, 503, 504].includes(status);
+    return { error: msg, busy };
   }
 }
 
@@ -105,7 +108,7 @@ export async function generateCaptions(
   // 2. Ask Gemini (retries + model fallback + output validation live in lib/gemini).
   const prompt = buildPrompt({ vibe, context, hasImage: !!image, theme });
   const ai = await askGemini(prompt, image);
-  if ("error" in ai) return { error: ai.error };
+  if ("error" in ai) return { error: ai.error, busy: ai.busy };
 
   // 3. Save post + captions (RLS: user_id must equal auth.uid()).
   const { data: post, error: postErr } = await supabase
@@ -135,7 +138,7 @@ export async function generateCaptions(
   redirect(`/p/${post.id}?new=1`);
 }
 
-export type MoreState = { error?: string; added?: number; at?: number };
+export type MoreState = { error?: string; busy?: boolean; added?: number; at?: number };
 
 /**
  * Server action: the post's owner asks for 3 more captions, optionally in a
@@ -181,7 +184,7 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
     avoid: existing.map((c) => c.text),
   });
   const ai = await askGemini(prompt, image);
-  if ("error" in ai) return { error: ai.error };
+  if ("error" in ai) return { error: ai.error, busy: ai.busy };
 
   const room = MAX_CAPTIONS_PER_POST - existing.length;
   const start = existing.reduce((max, c) => Math.max(max, c.position), -1) + 1;

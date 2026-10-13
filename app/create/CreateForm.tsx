@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { generateCaptions, type GenerateState } from "@/app/actions/captions";
 import { VibeBullet } from "@/app/components/LineBullet";
 import { resizeImage } from "@/lib/resize-image";
+import ServiceAlert from "@/app/components/ServiceAlert";
 import { VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
 
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -233,13 +234,7 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
         </label>
       </fieldset>
 
-      {state.error && !submitting && (
-        <div role="alert" className="rounded-xl border border-bullet-red/30 bg-bullet-red/5 p-4 text-sm">
-          <p className="font-semibold">The captions weren&apos;t written.</p>
-          <p className="mt-1 text-ink/80">{state.error}</p>
-          <p className="mt-1 text-ink/80">Your photo and text are still here. Press the button to try again.</p>
-        </div>
-      )}
+      {state.error && !submitting && <ServiceAlert error={state.error} busy={!!state.busy} keptInput />}
 
       {submitting ? (
         <Working hasPhoto={!!imagePath} />
@@ -250,7 +245,7 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
             disabled={!canSubmit}
             className="w-full rounded-full bg-metro px-5 py-3.5 text-base font-semibold text-ink transition-colors hover:bg-metro-deep disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-muted"
           >
-            Write 3 captions
+            {state.error ? "Try again" : "Write 3 captions"}
           </button>
           {!hasInput && <p className="mt-2 text-center text-sm text-muted">Add a photo or say what happened to continue.</p>}
         </div>

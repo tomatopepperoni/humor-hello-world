@@ -15,6 +15,45 @@ them up or down; the best themed post of the day tops the board.
 | 4 | AI caption generation (Gemini) saved to `posts` / `captions` with the exact prompt, up/down **votes** table, daily theme + leaderboard, **RLS on every table** |
 | 5 | Iteration: fixed truncated Gemini output, subway-sign redesign, copy/share captions, "write 3 more" for owners, profile with your posts and points, loading/error/404 screens |
 
+## Design concept: the city's own wayfinding
+
+Sam, our persona, is new to New York. The first system every newcomer has to learn
+here is the subway, and its signage is the most widely shared visual language in the
+city. The app is about New York moments, so instead of a generic social-app look it
+borrows that language. Subway signs are also built to be read at a glance, which is
+what a feed you scroll through between classes needs.
+
+| Subway element | Where it shows up | Why |
+|---|---|---|
+| Black station-sign band with the thin white rule along the top | Header, today's theme, the "enter today's theme" switch, notices | Black means "the system is talking" (theme, status, navigation); white cards are what people posted. |
+| Line bullets (letter in a coloured circle) | The four vibes: **O** Chronically online (purple), **R** Roast me (red), **M** Midwest nice (yellow), **C** Main character (blue) | A vibe is a line: same destination (your moment), different route. When a caption came from a different vibe than the post, it carries that vibe's bullet. Line colours are used only for vibes, so a colour always means something. |
+| MetroCard yellow | The one primary action on each screen (Post, Write 3 captions, Sign in, Try again), rank bullets, leading caption | One yellow thing per screen tells you what to do next. |
+| Route map | "How it works": three stations connected by a line | It is a real sequence (post → Gemini writes → everyone votes), so it is drawn as stops on one line. |
+| Platform countdown clock (amber digits) | "Next theme in 11 h 12 min" plus tomorrow's theme | A reason to come back, framed like checking when the next train arrives. |
+| Service alerts ("Delays", yellow diamond) | When Gemini is overloaded: "Delays on the Gemini line" | Tells you the problem is temporary and not your fault, keeps your photo and text, and the button turns into "Try again". Real errors use a red notice instead. |
+| Train on the line | Progress view while Gemini writes | Waiting 5–15 s feels shorter when you can see something moving and read what step it's on. |
+| Station number | Today's date in a yellow bullet next to the theme | The theme is "today's stop". |
+| "No train to this stop" | 404 page | Same voice for dead ends. |
+| Bullet icon | Favicon and home-screen icon: the yellow **C** | The app is recognisable as a tab or icon on a phone. |
+
+**Type.** One family, Geist Sans: a Swiss grotesk in the same lineage as the
+Helvetica on MTA signs. Headlines are bold and tightly set like sign text. Everything
+is sentence case (subway signs use mixed case because it reads faster). The caption is
+the largest text on every card because the AI output is the product.
+
+**Colour tokens** (`app/globals.css`): sign `#000000`, paper `#ECEEEC` (platform
+concrete, cooler than white), card `#FFFFFF`, MetroCard `#FCCC0A`, upvote `#00933C`
+(4/5/6 green), downvote `#6D6E71` (L-train grey). Downvotes are grey, not red, so a
+downvote reads as "not funny", not as a punishment.
+
+**Layout.** One column, at most 672 px wide, designed for phones first. On a phone each
+caption comes first and the vote/copy row sits under it, within thumb reach; on wider
+screens the vote control moves to the left of the caption.
+
+**Accessibility.** Colour is never the only signal (bullets carry letters, votes have
+labels and `aria-pressed`), there is a visible blue focus ring, a skip link, reduced
+motion is respected, and black-on-yellow keeps text contrast high.
+
 ## Running locally
 
 ```bash
@@ -43,8 +82,13 @@ npm run dev
 **Captions you can trust**
 - `maxOutputTokens` 1024 → 8192; thought parts are ignored.
 - The parser salvages only *complete* string literals from cut-off JSON and requires
-  3 usable, distinct captions; anything less is retried like a 5xx (same model, then
-  the next model), with an overall 50 s deadline.
+  3 usable, distinct captions; anything less counts as a miss.
+- "High demand" 503s are per model, so a request now goes *across* the model list
+  first (3.6-flash, 3.5-flash, 3.5-flash-lite, 3.8-flash, then the `gemini-flash-latest`
+  / `gemini-flash-lite-latest` aliases), then waits and makes up to two more passes,
+  all inside ~52 s (`maxDuration = 60` on the pages that call Gemini). Before, one busy
+  model could use up the whole time budget. When every model is busy the form says so
+  in plain words, keeps your photo and text, and the button becomes "Try again".
 - Captions already in the database are cleaned on read (`lib/caption-text.ts`):
   JSON debris is stripped and fragments like `[` are hidden.
 
@@ -65,6 +109,8 @@ npm run dev
 - Sign-in page says why you're there ("Sign in to vote on this post") and returns you
   to it afterwards; `/login?next=` only accepts same-site paths.
 - Loading skeleton, error screen with retry, and a 404 page.
+- Gemini overload shows as a "Delays on the Gemini line" service alert instead of a raw
+  error; the home page shows a countdown to the next theme.
 - Vote buttons have clear labels, `aria-pressed`, and stay in sync when the same caption
   is on screen twice.
 
@@ -237,3 +283,5 @@ The app always redirects to **`/auth/callback`** with no extra query params othe
 | `lib/caption-text.ts` | caption cleanup shared by the parser and the feed |
 | `lib/resize-image.ts` | in-browser photo resize before upload |
 | `lib/safe-next.ts` | same-site check for `?next=` redirects |
+| `app/components/ServiceAlert.tsx` | Gemini errors as subway-style service alerts |
+| `app/components/NextThemeClock.tsx` | countdown to the next daily theme |

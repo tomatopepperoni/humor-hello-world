@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PostCard from "@/app/components/PostCard";
 import { LineBullet } from "@/app/components/LineBullet";
+import NextThemeClock from "@/app/components/NextThemeClock";
 import { getCurrentProfile } from "@/lib/profile";
 import { getRecentPosts, getTopPostsToday, type PostWithCaptions } from "@/lib/posts";
 import { startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
@@ -86,9 +87,7 @@ export default async function Home() {
           >
             {loggedIn ? "Post for today's theme" : "Sign in to post"}
           </Link>
-          <p className="text-sm text-white/70">
-            New theme at midnight. Tomorrow: {tomorrow}
-          </p>
+          <NextThemeClock tomorrow={tomorrow} />
         </div>
       </section>
 

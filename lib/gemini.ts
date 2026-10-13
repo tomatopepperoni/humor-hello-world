@@ -7,19 +7,21 @@ import { isUsableCaption, tidyCaption } from "@/lib/caption-text";
  *
  * Env:
  *   GEMINI_API_KEY   required (https://aistudio.google.com/apikey – free tier)
- *   GEMINI_MODEL     optional. One model, or a comma-separated list tried in
- *                    order when a model is overloaded (503/429) or missing (404).
- *                    Defaults to gemini-3.6-flash → 3.5-flash → 3.5-flash-lite → 3.8-flash.
+ *   GEMINI_MODEL     optional. One model, or a comma-separated list. Overrides
+ *                    DEFAULT_MODELS below.
  */
 
-// Order = measured on 2026-10-06 with a free-tier key: 3.6-flash answered in ~3 s,
-// 3.5-flash/lite in 1–3 s, while 3.7/3.8-flash returned 503 "high demand" every time.
-// Any of these can be overridden with GEMINI_MODEL=model1,model2,...
+// 2026-10-06 (free-tier key): 3.6-flash answered in ~3 s, 3.5-flash/lite in 1–3 s,
+// 3.7/3.8-flash returned 503 "high demand". The two "-latest" aliases are a last
+// resort that follows whatever Flash model Google currently serves; a name that
+// doesn't exist just returns 404 and is skipped.
 const DEFAULT_MODELS = [
   "gemini-3.6-flash",
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-flash-lite-latest",
 ];
 
 export const GEMINI_MODELS: string[] = (process.env.GEMINI_MODEL || DEFAULT_MODELS.join(","))
@@ -42,13 +44,17 @@ export class GeminiError extends Error {
   }
 }
 
-const RETRY_STATUSES = new Set([429, 500, 503, 504]);
-const RETRY_DELAYS_MS = [800, 2000, 4000];
+/** Overloaded / rate-limited / flaky: worth trying again or on another model. */
+const RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+/** Pause between full passes over the model list. */
+const ROUND_DELAYS_MS = [1500, 4000];
+/** Total time budget per request; the page sets maxDuration = 60. */
+const BUDGET_MS = 52_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** One generateContent call against one model. Throws GeminiError with the HTTP status. */
-async function callModel(model: string, key: string, parts: Part[]): Promise<string> {
+async function callModel(model: string, key: string, parts: Part[], timeoutMs: number): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
@@ -70,7 +76,10 @@ async function callModel(model: string, key: string, parts: Part[]): Promise<str
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
       ],
     }),
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch((err: unknown) => {
+    const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+    throw new GeminiError(`${model} ${timedOut ? "timed out" : "could not be reached"}`, timedOut ? 504 : 503);
   });
 
   if (!res.ok) {
@@ -114,11 +123,12 @@ async function callModel(model: string, key: string, parts: Part[]): Promise<str
  * run through `accept`, plus the model that actually answered. The prompt
  * string passed here is exactly what we persist in the DB.
  *
- * Resilience: each model in GEMINI_MODELS is retried on 429/5xx with a short
- * backoff; a 404 (model retired) or exhausted retries fall through to the next
- * model. An answer that `accept` rejects (e.g. fewer than 3 usable captions)
- * counts as a retryable failure too. Only when every model fails do we
- * surface the first real error.
+ * Resilience: "high demand" 503s are per model, so we go *across* the model
+ * list first (one try each) and only then wait and do another pass, up to 3
+ * passes inside BUDGET_MS. A model that answers 404 (retired) or 400 (doesn't
+ * accept this request) is dropped; an answer that `accept` rejects (fewer than
+ * 3 usable captions) counts as a miss for that model. 401/403 (bad key) stop
+ * immediately.
  */
 export async function generateText<T = string>(
   prompt: string,
@@ -138,30 +148,52 @@ export async function generateText<T = string>(
   }
   parts.push({ text: prompt });
 
-  // Stay well inside the serverless function time limit.
-  const deadline = Date.now() + 50_000;
-  let lastError: GeminiError | undefined;
-  let firstError: GeminiError | undefined;
-  outer: for (const model of GEMINI_MODELS) {
-    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-      if (Date.now() > deadline) break outer;
+  const deadline = Date.now() + BUDGET_MS;
+  let models = [...GEMINI_MODELS];
+  const attempts: string[] = [];
+  let last: GeminiError | undefined;
+
+  for (let round = 0; round <= ROUND_DELAYS_MS.length && models.length > 0; round++) {
+    if (round > 0) {
+      const wait = ROUND_DELAYS_MS[round - 1];
+      if (Date.now() + wait + 3_000 > deadline) break;
+      await sleep(wait);
+    }
+    for (const model of [...models]) {
+      const left = deadline - Date.now();
+      if (left < 3_000) break;
       try {
-        const text = await callModel(model, key, parts);
+        const text = await callModel(model, key, parts, Math.min(25_000, left));
         return { value: accept(text), model };
       } catch (err) {
         const e = err instanceof GeminiError ? err : new GeminiError(String(err));
-        lastError = e;
-        if (!firstError && e.status !== 404) firstError = e;
-        if (e.status === 404) break; // model gone – try the next one
-        if (e.status !== undefined && !RETRY_STATUSES.has(e.status)) throw e; // real error (400/403…)
-        if (attempt < RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt]);
+        attempts.push(`${model} ${e.status ?? "error"}`);
+        if (e.status === 401 || e.status === 403) throw e; // key problem: retrying won't help
+        if (e.status === 404 || e.status === 400) {
+          models = models.filter((m) => m !== model);
+          if (e.status === 400) last = e;
+          continue;
+        }
+        last = e;
       }
     }
   }
-  const e = firstError ?? lastError;
+
+  // "gemini-3.6-flash 503 ×3, gemini-flash-latest 404" – one entry per model.
+  const byModel = new Map<string, string[]>();
+  for (const a of attempts) {
+    const [m, st] = a.split(" ");
+    byModel.set(m, [...(byModel.get(m) ?? []), st]);
+  }
+  const tried = [...byModel]
+    .map(([m, sts]) => (sts.every((x) => x === sts[0]) && sts.length > 1 ? `${m} ${sts[0]} ×${sts.length}` : `${m} ${sts.join("/")}`))
+    .join(", ");
+  const overloaded = last?.status !== undefined && RETRY_STATUSES.has(last.status);
   throw new GeminiError(
-    `${e?.message ?? "Gemini is unavailable."} Tried ${GEMINI_MODELS.join(", ")}. Google is busy right now; try again in a minute.`,
-    e?.status
+    overloaded
+      ? `Google's Gemini servers are overloaded right now, so no captions were written. Wait a minute and try again. (Tried: ${tried})`
+      : `${last?.message ?? "Gemini is unavailable."} (Tried: ${tried})`,
+    last?.status ?? 503
   );
 }
 

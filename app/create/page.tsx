@@ -5,6 +5,8 @@ import { getCurrentProfile } from "@/lib/profile";
 import { todaysTheme } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
+// Server actions on this page call Gemini, which can take a while when it is busy.
+export const maxDuration = 60;
 export const metadata: Metadata = { title: "New post" };
 
 /** Protected route (proxy.ts also redirects logged-out users to /login). */

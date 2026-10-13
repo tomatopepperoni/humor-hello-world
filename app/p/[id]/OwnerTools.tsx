@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { addCaptions, deletePost, type MoreState } from "@/app/actions/captions";
 import { VibeBullet } from "@/app/components/LineBullet";
 import { VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
+import ServiceAlert from "@/app/components/ServiceAlert";
 
 /** Owner-only: ask Gemini for 3 more captions (any vibe), or delete the post. */
 export default function OwnerTools({
@@ -71,10 +72,10 @@ export default function OwnerTools({
               {pending ? "Writing three more…" : "Write 3 more captions"}
             </button>
           </fieldset>
-          {state.error && (
-            <p role="alert" className="mt-3 text-sm text-bullet-red">
-              {state.error}
-            </p>
+          {state.error && !pending && (
+            <div className="mt-3">
+              <ServiceAlert error={state.error} busy={!!state.busy} />
+            </div>
           )}
           {state.added && !pending && (
             <p role="status" className="mt-3 text-sm text-go">
