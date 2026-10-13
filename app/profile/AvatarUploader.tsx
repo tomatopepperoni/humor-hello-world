@@ -85,7 +85,7 @@ export default function AvatarUploader({
           className="h-24 w-24 rounded-full border object-cover"
         />
       ) : (
-        <div className="flex h-24 w-24 items-center justify-center rounded-full border bg-gray-100 text-2xl font-semibold text-gray-500">
+        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-ink/10 text-2xl font-semibold text-ink/70">
           {initials || "?"}
         </div>
       )}
@@ -97,19 +97,19 @@ export default function AvatarUploader({
           accept="image/*"
           onChange={onFileChange}
           disabled={uploading}
-          className="hidden"
+          className="sr-only"
           id="avatar-input"
         />
         <label
           htmlFor="avatar-input"
-          className={`inline-block cursor-pointer rounded-lg border px-4 py-2 text-sm font-medium transition hover:bg-gray-50 ${
+          className={`inline-block cursor-pointer rounded-full border bg-white px-4 py-2 text-sm font-medium transition-colors hover:border-ink/40 ${
             uploading ? "pointer-events-none opacity-60" : ""
           }`}
         >
           {uploading ? "Uploading…" : preview ? "Change photo" : "Upload photo"}
         </label>
-        <p className="mt-1 text-xs text-gray-500">JPG, PNG or WebP, up to 5 MB.</p>
-        {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+        <p className="mt-1.5 text-sm text-muted">JPG, PNG or WebP, up to 5 MB.</p>
+        {error && <p role="alert" className="mt-1 text-sm text-bullet-red">{error}</p>}
       </div>
     </div>
   );

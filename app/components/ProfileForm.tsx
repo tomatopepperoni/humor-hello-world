@@ -32,7 +32,7 @@ export default function ProfileForm({
             name="first_name"
             required
             defaultValue={defaults.first_name ?? ""}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
+            className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-[15px] focus:border-ink focus:outline-none"
             placeholder="Ada"
           />
         </label>
@@ -42,7 +42,7 @@ export default function ProfileForm({
             name="last_name"
             required
             defaultValue={defaults.last_name ?? ""}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
+            className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-[15px] focus:border-ink focus:outline-none"
             placeholder="Lovelace"
           />
         </label>
@@ -51,25 +51,25 @@ export default function ProfileForm({
       {showBio && (
         <label className="block">
           <span className="text-sm font-medium">
-            Bio <span className="font-normal text-gray-500">(optional)</span>
+            Bio <span className="font-normal text-muted">(optional)</span>
           </span>
           <textarea
             name="bio"
             rows={3}
             defaultValue={defaults.bio ?? ""}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
-            placeholder="Tell us your favorite kind of joke…"
+            className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-[15px] focus:border-ink focus:outline-none"
+            placeholder="Which part of the city are you still figuring out?"
           />
         </label>
       )}
 
-      {state.error && <p className="text-sm text-red-600">{state.error}</p>}
-      {state.success && <p className="text-sm text-green-700">{state.success}</p>}
+      {state.error && <p role="alert" className="text-sm text-bullet-red">{state.error}</p>}
+      {state.success && <p role="status" className="text-sm text-go">{state.success}</p>}
 
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-black px-5 py-2 font-medium text-white transition hover:bg-gray-800 disabled:opacity-60"
+        className="rounded-full bg-metro px-5 py-2.5 font-semibold text-ink transition-colors hover:bg-metro-deep disabled:opacity-60"
       >
         {pending ? "Saving…" : submitLabel}
       </button>

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { safeNext } from "@/lib/safe-next";
 
 export type ProfileFormState = { error?: string; success?: string };
 
@@ -26,7 +27,7 @@ export async function updateProfile(
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
   const bio = String(formData.get("bio") ?? "").trim() || null;
-  const next = String(formData.get("next") ?? "");
+  const next = safeNext(formData.get("next"), "");
 
   if (!first_name || !last_name) {
     return { error: "First name and last name are both required." };

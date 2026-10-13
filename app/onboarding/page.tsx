@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import ProfileForm from "@/app/components/ProfileForm";
 import { getCurrentProfile } from "@/lib/profile";
+import { safeNext } from "@/lib/safe-next";
 
 /**
  * Shown right after first login when the profile has no first/last name yet.
@@ -10,7 +11,7 @@ export default async function OnboardingPage({
   searchParams,
 }: PageProps<"/onboarding">) {
   const params = await searchParams;
-  const next = typeof params.next === "string" ? params.next : "/";
+  const next = safeNext(params.next);
 
   const { user, profile } = await getCurrentProfile();
   if (!user) redirect("/login");
@@ -25,12 +26,12 @@ export default async function OnboardingPage({
   };
 
   return (
-    <main className="mx-auto max-w-lg flex-1 p-8">
-      <h1 className="text-3xl font-bold">Welcome! 👋</h1>
-      <p className="mt-2 text-gray-600">
-        Before you continue, tell us what to call you.
+    <main className="mx-auto w-full max-w-lg flex-1 px-4 py-10">
+      <h1 className="text-[28px] font-bold tracking-tight">Welcome to Captioned NYC</h1>
+      <p className="mt-2 text-[15px] text-muted">
+        One step before you post: how should your name show up next to your posts? Only your first name is shown publicly.
       </p>
-      <div className="mt-8">
+      <div className="mt-6 rounded-2xl border bg-card p-4 sm:p-5">
         <ProfileForm defaults={defaults} next={next} submitLabel="Continue" />
       </div>
     </main>

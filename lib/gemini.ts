@@ -1,4 +1,5 @@
 import "server-only";
+import { isUsableCaption, tidyCaption } from "@/lib/caption-text";
 
 /**
  * Minimal Google Gemini client (REST, no SDK). Server-side only – the API key
@@ -59,7 +60,9 @@ async function callModel(model: string, key: string, parts: Part[]): Promise<str
       contents: [{ role: "user", parts }],
       generationConfig: {
         temperature: 1.0,
-        maxOutputTokens: 1024,
+        // Thinking tokens count toward this limit. 1024 cut week-4 answers off
+        // mid-JSON (captions like "[" in the feed), so leave plenty of room.
+        maxOutputTokens: 8192,
         responseMimeType: "application/json",
       },
       safetySettings: [
@@ -67,7 +70,7 @@ async function callModel(model: string, key: string, parts: Part[]): Promise<str
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
       ],
     }),
-    signal: AbortSignal.timeout(40_000),
+    signal: AbortSignal.timeout(25_000),
   });
 
   if (!res.ok) {
@@ -93,7 +96,8 @@ async function callModel(model: string, key: string, parts: Part[]): Promise<str
     throw new GeminiError(`Prompt blocked (${json.promptFeedback.blockReason}).`, 400);
   }
   const text = json.candidates?.[0]?.content?.parts
-    ?.map((p) => p.text ?? "")
+    ?.filter((p) => !(p as { thought?: boolean }).thought)
+    .map((p) => p.text ?? "")
     .join("")
     .trim();
   if (!text) {
@@ -106,18 +110,21 @@ async function callModel(model: string, key: string, parts: Part[]): Promise<str
 }
 
 /**
- * Sends one prompt (optionally with an image) and returns the model's text plus
- * the model that actually answered. The prompt string passed here is exactly
- * what we persist in the DB.
+ * Sends one prompt (optionally with an image) and returns the model's answer,
+ * run through `accept`, plus the model that actually answered. The prompt
+ * string passed here is exactly what we persist in the DB.
  *
  * Resilience: each model in GEMINI_MODELS is retried on 429/5xx with a short
  * backoff; a 404 (model retired) or exhausted retries fall through to the next
- * model. Only when every model fails do we surface the last error.
+ * model. An answer that `accept` rejects (e.g. fewer than 3 usable captions)
+ * counts as a retryable failure too. Only when every model fails do we
+ * surface the first real error.
  */
-export async function generateText(
+export async function generateText<T = string>(
   prompt: string,
-  image?: GeminiImage
-): Promise<{ text: string; model: string }> {
+  image?: GeminiImage,
+  accept: (text: string) => T = (t) => t as unknown as T
+): Promise<{ value: T; model: string }> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     throw new GeminiError(
@@ -131,13 +138,16 @@ export async function generateText(
   }
   parts.push({ text: prompt });
 
+  // Stay well inside the serverless function time limit.
+  const deadline = Date.now() + 50_000;
   let lastError: GeminiError | undefined;
   let firstError: GeminiError | undefined;
-  for (const model of GEMINI_MODELS) {
+  outer: for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      if (Date.now() > deadline) break outer;
       try {
         const text = await callModel(model, key, parts);
-        return { text, model };
+        return { value: accept(text), model };
       } catch (err) {
         const e = err instanceof GeminiError ? err : new GeminiError(String(err));
         lastError = e;
@@ -150,31 +160,60 @@ export async function generateText(
   }
   const e = firstError ?? lastError;
   throw new GeminiError(
-    `${e?.message ?? "Gemini is unavailable."} — tried ${GEMINI_MODELS.join(", ")}; Google is under heavy load right now, please try again in a minute.`,
+    `${e?.message ?? "Gemini is unavailable."} Tried ${GEMINI_MODELS.join(", ")}. Google is busy right now; try again in a minute.`,
     e?.status
   );
 }
 
-/** Pull a JSON array of strings out of the model output, tolerating code fences. */
+/**
+ * Pull `want` captions out of the model output. Accepts a JSON array of
+ * strings (or {captions: [...]}) and, when the JSON is cut off, salvages every
+ * *complete* string literal instead of splitting lines (which is how week-4
+ * rows ended up with a caption that was just "["). Throws a retryable
+ * GeminiError (502) when fewer than `want` usable captions come back.
+ */
 export function parseCaptionList(raw: string, want = 3): string[] {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
-  let parsed: unknown;
+
+  let items: unknown[] = [];
   try {
-    parsed = JSON.parse(cleaned);
+    const parsed: unknown = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) items = parsed;
+    else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { captions?: unknown }).captions)) {
+      items = (parsed as { captions: unknown[] }).captions;
+    }
   } catch {
-    // Fall back to one caption per non-empty line.
-    parsed = cleaned
-      .split("\n")
-      .map((l) => l.replace(/^[\s\-\d.*"]+|["\s]+$/g, "").trim())
-      .filter(Boolean);
+    // Truncated or chatty output: keep only fully closed "…" literals.
+    for (const m of cleaned.matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+      try {
+        items.push(JSON.parse(m[0]));
+      } catch {
+        /* skip malformed literal */
+      }
+    }
   }
-  let list: string[] = [];
-  if (Array.isArray(parsed)) {
-    list = parsed.map((x) => (typeof x === "string" ? x : String((x as { caption?: string })?.caption ?? ""))).map((s) => s.trim());
-  } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { captions?: unknown }).captions)) {
-    list = ((parsed as { captions: unknown[] }).captions).map((x) => String(x).trim());
+
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const item of items) {
+    const text =
+      typeof item === "string"
+        ? item
+        : item && typeof item === "object" && typeof (item as { caption?: unknown }).caption === "string"
+          ? (item as { caption: string }).caption
+          : "";
+    const t = tidyCaption(text);
+    const k = t.toLowerCase();
+    if (!isUsableCaption(t) || seen.has(k)) continue;
+    seen.add(k);
+    list.push(t);
   }
-  list = list.filter((s) => s.length > 0 && s.length <= 300);
-  if (list.length === 0) throw new GeminiError("Could not parse captions from the model output.");
+
+  if (list.length < want) {
+    throw new GeminiError(
+      `The model returned ${list.length} usable caption${list.length === 1 ? "" : "s"} instead of ${want}.`,
+      502
+    );
+  }
   return list.slice(0, want);
 }

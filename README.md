@@ -13,6 +13,7 @@ them up or down; the best themed post of the day tops the board.
 | 2 | Supabase `jokes` table, `/jokes` list page |
 | 3 | Google login (Supabase Auth), `profiles` table + trigger, onboarding, `/profile` with photo upload, protected `/jokes` route |
 | 4 | AI caption generation (Gemini) saved to `posts` / `captions` with the exact prompt, up/down **votes** table, daily theme + leaderboard, **RLS on every table** |
+| 5 | Iteration: fixed truncated Gemini output, subway-sign redesign, copy/share captions, "write 3 more" for owners, profile with your posts and points, loading/error/404 screens |
 
 ## Running locally
 
@@ -21,6 +22,62 @@ npm install
 cp .env.example .env.local   # fill in the two Supabase values + GEMINI_API_KEY
 npm run dev
 ```
+
+## Week 5 – Get feedback and iterate
+
+### What testing the live week-4 build showed
+
+- **Both posts in production had broken captions.** One caption was literally `[`,
+  others stopped mid-sentence ("…free, bruised bananas in"). Cause: newer Gemini
+  models spend "thinking" tokens out of `maxOutputTokens`, so 1024 tokens cut the JSON
+  array off, and the fallback parser split the half-finished JSON by line.
+- Borders rendered pure black (Tailwind v4 defaults `border` to `currentColor`).
+- The feed didn't explain itself to a first-time visitor, and a "Jokes" link from
+  week 2 sat in the header of a captions app.
+- Once you had captions there was nothing to *do* with them: no way to copy one, share
+  the post, or ask for different captions. Delete had no confirmation.
+- `?next=` was passed straight into redirects (open-redirect).
+
+### What changed
+
+**Captions you can trust**
+- `maxOutputTokens` 1024 → 8192; thought parts are ignored.
+- The parser salvages only *complete* string literals from cut-off JSON and requires
+  3 usable, distinct captions; anything less is retried like a 5xx (same model, then
+  the next model), with an overall 50 s deadline.
+- Captions already in the database are cleaned on read (`lib/caption-text.ts`):
+  JSON debris is stripped and fragments like `[` are hidden.
+
+**Usability**
+- Home: today's theme as a station sign with the date, tomorrow's theme as a teaser,
+  a three-stop "How it works" route map for logged-out visitors, and a
+  "N posts from today are waiting for your vote" prompt for logged-in ones.
+- Each caption has **Copy**; each post has **Share** (phone share sheet, or copies the
+  link). Post pages set Open Graph tags so a shared link previews the leading caption
+  and the photo.
+- The leading caption is highlighted. Feed cards show the top 3; the post page shows all.
+- Owners get **Write 3 more captions** in any vibe (the prompt lists the existing
+  captions so they aren't repeated; max 9 per post) and a two-step delete.
+- Create: drag-and-drop or tap upload, photos resized to ≤1600 px JPEG in the browser
+  (phone photos upload faster and fit the bucket), vibe cards that say what each vibe
+  does, a progress view while Gemini works, and errors that say what to do next.
+- Profile: your posts with points, totals (posts, points earned, votes cast), sign-out.
+- Sign-in page says why you're there ("Sign in to vote on this post") and returns you
+  to it afterwards; `/login?next=` only accepts same-site paths.
+- Loading skeleton, error screen with retry, and a 404 page.
+- Vote buttons have clear labels, `aria-pressed`, and stay in sync when the same caption
+  is on screen twice.
+
+**Visual design**
+- One visual language taken from NYC subway signage: black sign bands with a thin white
+  rule, the four vibes as line bullets (O, R, M, C), MetroCard yellow for the one primary
+  action on each screen, green/grey for up/down votes. Geist for all type.
+- Captions are the largest text on a card. Phone layout puts the caption first and the
+  vote/copy row under it.
+
+### Feedback group notes
+
+_Add the PM's and group's comments from this week's session here._
 
 ## Week 4 – Rating app
 
@@ -174,3 +231,9 @@ The app always redirects to **`/auth/callback`** with no extra query params othe
 | `app/p/[id]` | single post with captions, votes and the saved prompt |
 | `app/top` | leaderboard |
 | `app/components/PostCard.tsx`, `VoteButtons.tsx` | feed card and the up/down vote control |
+| `app/components/LineBullet.tsx` | subway-style bullets for vibes and ranks |
+| `app/components/CopyButton.tsx` | copy a caption / share a post |
+| `app/p/[id]/OwnerTools.tsx` | "write 3 more captions" and confirm-to-delete |
+| `lib/caption-text.ts` | caption cleanup shared by the parser and the feed |
+| `lib/resize-image.ts` | in-browser photo resize before upload |
+| `lib/safe-next.ts` | same-site check for `?next=` redirects |

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNext } from "@/lib/safe-next";
 
 /** Routes that require a logged-in user. */
 const PROTECTED_PREFIXES = ["/jokes", "/profile", "/onboarding", "/create"];
@@ -53,10 +54,8 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    url.search = "";
-    return NextResponse.redirect(url);
+    const target = safeNext(request.nextUrl.searchParams.get("next"));
+    return NextResponse.redirect(new URL(target, request.url));
   }
 
   // Logged in: make sure the profile has a first and last name before

@@ -1,5 +1,7 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
-import { startOfTodayNY } from "@/lib/vibes";
+import { isUsableCaption, tidyCaption } from "@/lib/caption-text";
+import { startOfTodayNY, vibeFromPrompt, type Vibe } from "@/lib/vibes";
 
 export type Author = {
   id: string;
@@ -20,6 +22,8 @@ export type CaptionWithScore = {
   score: number;
   /** +1 / -1 / 0 for the current viewer */
   my_vote: number;
+  /** vibe this caption was written in (read back from its prompt) */
+  vibe: Vibe | null;
 };
 
 export type PostWithCaptions = {
@@ -35,6 +39,10 @@ export type PostWithCaptions = {
   captions: CaptionWithScore[];
   /** sum of caption scores – used for ranking posts */
   total_score: number;
+  /** caption with the single highest positive score, if there is one */
+  leading_caption_id: string | null;
+  /** true when the viewer has voted on at least one caption of this post */
+  voted_by_me: boolean;
 };
 
 type CaptionRow = {
@@ -105,17 +113,27 @@ async function hydrate(posts: PostRow[]): Promise<PostWithCaptions[]> {
         const s = scores.get(c.id);
         return {
           ...c,
+          // Week-4 rows written before the truncation fix can contain JSON debris.
+          text: tidyCaption(c.text),
           upvotes: s?.upvotes ?? 0,
           downvotes: s?.downvotes ?? 0,
           score: s?.score ?? 0,
           my_vote: myVotes.get(c.id) ?? 0,
+          vibe: vibeFromPrompt(c.prompt),
         };
-      });
+      })
+      .filter((c) => isUsableCaption(c.text));
+
+    const best = Math.max(0, ...captions.map((c) => c.score));
+    const leaders = captions.filter((c) => c.score === best && best > 0);
+
     return {
       ...p,
       author: authors.get(p.user_id) ?? null,
       captions,
       total_score: captions.reduce((sum, c) => sum + c.score, 0),
+      leading_caption_id: leaders.length === 1 ? leaders[0].id : null,
+      voted_by_me: captions.some((c) => c.my_vote !== 0),
     };
   });
 }
@@ -134,7 +152,8 @@ export async function getRecentPosts(limit = 20): Promise<PostWithCaptions[]> {
   return hydrate((data ?? []) as PostRow[]);
 }
 
-export async function getPost(id: string): Promise<PostWithCaptions | null> {
+/** Cached per request, so generateMetadata and the page share one fetch. */
+export const getPost = cache(async function getPost(id: string): Promise<PostWithCaptions | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("posts")
@@ -145,6 +164,19 @@ export async function getPost(id: string): Promise<PostWithCaptions | null> {
   if (!data) return null;
   const [post] = await hydrate([data as PostRow]);
   return post ?? null;
+});
+
+/** Everything one user has posted, newest first (for /profile). */
+export async function getPostsByUser(userId: string, limit = 50): Promise<PostWithCaptions[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("posts")
+    .select(POST_SELECT)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return hydrate((data ?? []) as PostRow[]);
 }
 
 /** Posts created today (NY time), ranked by total caption score. */
@@ -170,6 +202,7 @@ export async function getTopCaptionsAllTime(limit = 20) {
   const { data: scores, error } = await supabase
     .from("caption_scores")
     .select("caption_id, score")
+    .gt("score", 0)
     .order("score", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);

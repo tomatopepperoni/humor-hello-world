@@ -1,175 +1,260 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { generateCaptions, type GenerateState } from "@/app/actions/captions";
+import { VibeBullet } from "@/app/components/LineBullet";
+import { resizeImage } from "@/lib/resize-image";
 import { VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
 
 const MAX_BYTES = 8 * 1024 * 1024;
+const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+
+const PROGRESS = [
+  "Sending your post to Gemini",
+  "Gemini is looking at your moment",
+  "Writing three different captions",
+  "Checking they aren't all the same joke",
+  "Almost there",
+];
+
+/** Shown while the server action runs: a train riding the line, plus what's happening. */
+function Working({ hasPhoto }: { hasPhoto: boolean }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setStep((s) => Math.min(s + 1, PROGRESS.length - 1)), 2600);
+    return () => window.clearInterval(t);
+  }, []);
+  const text = step === 1 && hasPhoto ? "Gemini is looking at your photo" : PROGRESS[step];
+  return (
+    <div role="status" aria-live="polite" className="rounded-xl bg-sign p-5 text-white">
+      <div className="relative h-7">
+        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/25" />
+        <span className="train absolute top-0 flex h-7 w-7 items-center justify-center rounded-full bg-metro text-xs font-bold text-ink">
+          C
+        </span>
+      </div>
+      <p className="mt-3 text-[15px] font-medium">{text}…</p>
+      <p className="mt-0.5 text-sm text-white/70">Usually 5 to 15 seconds. Keep this tab open.</p>
+    </div>
+  );
+}
 
 export default function CreateForm({ userId, theme }: { userId: string; theme: string }) {
-  const [state, formAction, submitting] = useActionState<GenerateState, FormData>(
-    generateCaptions,
-    {}
-  );
+  const [state, formAction, submitting] = useActionState<GenerateState, FormData>(generateCaptions, {});
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [imagePath, setImagePath] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [vibe, setVibe] = useState<Vibe>("chronically-online");
   const [context, setContext] = useState("");
 
-  async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function upload(original: File) {
     setUploadError(null);
-    if (!file.type.startsWith("image/")) return setUploadError("Please choose an image file.");
-    if (file.size > MAX_BYTES) return setUploadError("Image must be 8 MB or smaller.");
+    if (!original.type.startsWith("image/") && !/\.(heic|heif)$/i.test(original.name)) {
+      setUploadError("That file isn't a photo. Choose a JPG, PNG or WebP image.");
+      return;
+    }
 
     setUploading(true);
     try {
+      const file = await resizeImage(original);
+      if (!ALLOWED.includes(file.type)) {
+        throw new Error(
+          "This photo format can't be read in this browser. Choose a JPG or PNG, or open the site in Safari."
+        );
+      }
+      if (file.size > MAX_BYTES) throw new Error("This photo is over 8 MB even after resizing. Choose a smaller one.");
+
       const supabase = createClient();
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : file.type === "image/gif" ? "gif" : "jpg";
       // RLS on storage.objects only allows uploads into <userId>/…
       const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const { error } = await supabase.storage
-        .from("photos")
-        .upload(path, file, { contentType: file.type, upsert: false });
+      const { error } = await supabase.storage.from("photos").upload(path, file, { contentType: file.type, upsert: false });
       if (error) throw error;
       const {
         data: { publicUrl },
       } = supabase.storage.from("photos").getPublicUrl(path);
       setImagePath(path);
       setImageUrl(publicUrl);
-      setPreview(URL.createObjectURL(file));
+      setPreview((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return URL.createObjectURL(file);
+      });
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+      setUploadError(err instanceof Error ? err.message : "The upload didn't go through. Try again.");
       setImagePath("");
       setImageUrl("");
       setPreview(null);
     } finally {
       setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
     }
   }
 
   function clearPhoto() {
     setImagePath("");
     setImageUrl("");
-    setPreview(null);
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return null;
+    });
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  const canSubmit = !submitting && !uploading && (imagePath !== "" || context.trim() !== "");
+  const hasInput = imagePath !== "" || context.trim() !== "";
+  const canSubmit = !submitting && !uploading && hasInput;
 
   return (
-    <form action={formAction} className="space-y-6">
+    <form action={formAction} className="space-y-7">
       <input type="hidden" name="image_path" value={imagePath} />
       <input type="hidden" name="image_url" value={imageUrl} />
 
-      {/* Photo */}
-      <div>
-        <label className="block text-sm font-medium">Photo <span className="text-gray-400">(optional)</span></label>
-        <input
-          ref={inputRef}
-          id="photo-input"
-          type="file"
-          accept="image/*"
-          onChange={onFileChange}
-          disabled={uploading || submitting}
-          className="hidden"
-        />
-        {preview ? (
-          <div className="mt-2 flex items-start gap-4">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={preview} alt="Preview" className="max-h-64 rounded-xl border object-contain" />
-            <button type="button" onClick={clearPhoto} className="text-sm text-gray-500 underline">
-              Remove
-            </button>
-          </div>
-        ) : (
-          <label
-            htmlFor="photo-input"
-            className={`mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 text-center text-sm text-gray-500 transition hover:border-gray-400 hover:bg-gray-50 ${
-              uploading ? "pointer-events-none opacity-60" : ""
-            }`}
-          >
-            <span className="text-2xl">📷</span>
-            <span className="mt-1">{uploading ? "Uploading…" : "Tap to upload a photo"}</span>
-            <span className="text-xs text-gray-400">JPG, PNG or WebP · up to 8 MB</span>
-          </label>
-        )}
-        {uploadError && <p className="mt-1 text-sm text-red-600">{uploadError}</p>}
-      </div>
-
-      {/* Context */}
-      <div>
-        <label htmlFor="context" className="block text-sm font-medium">
-          What&apos;s the moment? <span className="text-gray-400">(optional if you added a photo)</span>
-        </label>
-        <textarea
-          id="context"
-          name="context"
-          rows={2}
-          maxLength={200}
-          value={context}
-          onChange={(e) => setContext(e.target.value)}
-          placeholder="e.g. 45 minutes in line at Levain for one cookie"
-          className="mt-2 w-full rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 focus:ring-black"
-        />
-        <p className="mt-1 text-right text-xs text-gray-400">{context.length}/200</p>
-      </div>
-
-      {/* Vibe */}
-      <div>
-        <p className="block text-sm font-medium">Vibe</p>
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {VIBE_KEYS.map((k) => (
+      <fieldset disabled={submitting} className="space-y-7">
+        {/* Photo */}
+        <div>
+          <p className="text-[15px] font-semibold">
+            Photo <span className="font-normal text-muted">(optional)</span>
+          </p>
+          <input
+            ref={inputRef}
+            id="photo-input"
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) upload(f);
+            }}
+            disabled={uploading || submitting}
+            className="sr-only"
+          />
+          {preview ? (
+            <div className="mt-2 flex items-start gap-4 rounded-xl border bg-card p-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={preview} alt="Your photo" className="max-h-56 max-w-[60%] rounded-lg object-contain" />
+              <div className="flex flex-col items-start gap-2 text-sm">
+                <p className="text-go">Uploaded</p>
+                <label htmlFor="photo-input" className="cursor-pointer font-medium text-ink underline-offset-4 hover:underline">
+                  Replace
+                </label>
+                <button type="button" onClick={clearPhoto} className="text-muted underline-offset-4 hover:text-ink hover:underline">
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
             <label
-              key={k}
-              className={`cursor-pointer rounded-xl border p-3 text-center text-sm transition ${
-                vibe === k ? "border-black bg-black text-white" : "hover:bg-gray-50"
-              }`}
+              htmlFor="photo-input"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                const f = e.dataTransfer.files?.[0];
+                if (f) upload(f);
+              }}
+              className={`mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed bg-card px-6 py-9 text-center transition-colors has-[:focus-visible]:outline-2 ${
+                dragging ? "border-bullet-blue bg-bullet-blue/5" : "hover:border-ink/40"
+              } ${uploading ? "pointer-events-none opacity-60" : ""}`}
             >
-              <input
-                type="radio"
-                name="vibe"
-                value={k}
-                checked={vibe === k}
-                onChange={() => setVibe(k)}
-                className="sr-only"
-              />
-              <span className="text-xl">{VIBES[k].emoji}</span>
-              <span className="mt-1 block">{VIBES[k].label}</span>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-muted" aria-hidden="true">
+                <rect x="3" y="6" width="18" height="14" rx="2" />
+                <circle cx="12" cy="13" r="3.5" />
+                <path d="M8 6l1.5-2h5L16 6" />
+              </svg>
+              <span className="mt-2 text-[15px] font-medium">{uploading ? "Uploading…" : "Add a photo"}</span>
+              <span className="mt-0.5 text-sm text-muted">Tap to choose, or drop one here. Big photos are resized for you.</span>
             </label>
-          ))}
+          )}
+          {uploadError && (
+            <p role="alert" className="mt-2 text-sm text-bullet-red">
+              {uploadError}
+            </p>
+          )}
         </div>
-      </div>
 
-      {/* Theme */}
-      <label className="flex items-start gap-3 rounded-xl border bg-orange-50 p-3 text-sm">
-        <input type="checkbox" name="use_theme" defaultChecked className="mt-1" />
-        <span>
-          <span className="font-medium">Enter today&apos;s theme:</span> {theme}
-          <span className="block text-xs text-gray-500">
-            Themed posts compete on the “Top today” board.
+        {/* Context */}
+        <div>
+          <label htmlFor="context" className="text-[15px] font-semibold">
+            What happened? <span className="font-normal text-muted">{imagePath ? "(optional)" : "(or add a photo)"}</span>
+          </label>
+          <textarea
+            id="context"
+            name="context"
+            rows={2}
+            maxLength={200}
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+            placeholder="45 minutes in line at Levain for one cookie"
+            className="mt-2 w-full resize-none rounded-xl border bg-card p-3 text-[15px] placeholder:text-muted/70 focus:border-ink focus:outline-none"
+          />
+          <p className="mt-1 text-right text-xs text-muted">{context.length}/200</p>
+        </div>
+
+        {/* Vibe */}
+        <fieldset>
+          <legend className="text-[15px] font-semibold">Pick a vibe</legend>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {VIBE_KEYS.map((k) => {
+              const on = vibe === k;
+              return (
+                <label
+                  key={k}
+                  className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-bullet-blue ${
+                    on ? "border-ink bg-ink text-white" : "bg-card hover:border-ink/40"
+                  }`}
+                >
+                  <input type="radio" name="vibe" value={k} checked={on} onChange={() => setVibe(k)} className="sr-only" />
+                  <VibeBullet vibe={k} size={30} />
+                  <span className="min-w-0">
+                    <span className="block font-semibold">{VIBES[k].label}</span>
+                    <span className={`block text-sm ${on ? "text-white/75" : "text-muted"}`}>{VIBES[k].blurb}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        {/* Theme */}
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-sign p-4 text-white">
+          <input type="checkbox" name="use_theme" defaultChecked className="mt-1 h-4 w-4 accent-metro" />
+          <span>
+            <span className="block font-semibold">Enter today&apos;s theme: {theme}</span>
+            <span className="mt-0.5 block text-sm text-white/70">Themed posts compete for Top today. Untick it for anything else.</span>
           </span>
-        </span>
-      </label>
+        </label>
+      </fieldset>
 
-      {state.error && (
-        <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{state.error}</p>
+      {state.error && !submitting && (
+        <div role="alert" className="rounded-xl border border-bullet-red/30 bg-bullet-red/5 p-4 text-sm">
+          <p className="font-semibold">The captions weren&apos;t written.</p>
+          <p className="mt-1 text-ink/80">{state.error}</p>
+          <p className="mt-1 text-ink/80">Your photo and text are still here. Press the button to try again.</p>
+        </div>
       )}
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        className="w-full rounded-full bg-black px-5 py-3 font-semibold text-white transition hover:bg-gray-800 disabled:opacity-50"
-      >
-        {submitting ? "Asking Gemini… (a few seconds)" : "Generate 3 captions ✨"}
-      </button>
+      {submitting ? (
+        <Working hasPhoto={!!imagePath} />
+      ) : (
+        <div>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="w-full rounded-full bg-metro px-5 py-3.5 text-base font-semibold text-ink transition-colors hover:bg-metro-deep disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-muted"
+          >
+            Write 3 captions
+          </button>
+          {!hasInput && <p className="mt-2 text-center text-sm text-muted">Add a photo or say what happened to continue.</p>}
+        </div>
+      )}
     </form>
   );
 }

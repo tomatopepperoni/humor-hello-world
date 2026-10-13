@@ -29,7 +29,7 @@ export default function GoogleSignInButton({ next }: { next?: string }) {
       <button
         onClick={signIn}
         disabled={loading}
-        className="flex items-center gap-3 rounded-lg border bg-white px-5 py-3 font-medium text-gray-800 shadow-sm transition hover:bg-gray-50 disabled:opacity-60"
+        className="flex w-full items-center justify-center gap-3 rounded-full bg-white px-5 py-3 font-semibold text-ink transition-colors hover:bg-white/90 disabled:opacity-60"
       >
         <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
           <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" />
@@ -39,7 +39,7 @@ export default function GoogleSignInButton({ next }: { next?: string }) {
         </svg>
         {loading ? "Redirecting…" : "Continue with Google"}
       </button>
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="mt-3 text-sm text-white">{error}</p>}
     </div>
   );
 }

@@ -21,17 +21,18 @@ export default async function JokesPage() {
     .order("id");
 
   if (error) {
-    return <p className="p-8 text-red-600">Error: {error.message}</p>;
+    return <p className="p-8 text-bullet-red">The jokes didn&apos;t load: {error.message}</p>;
   }
 
   return (
-    <main className="mx-auto max-w-2xl flex-1 p-8">
-      <h1 className="mb-6 text-3xl font-bold">Jokes</h1>
+    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">
+      <h1 className="mb-1 text-[28px] font-bold tracking-tight">Jokes</h1>
+      <p className="mb-6 text-[15px] text-muted">The week 2 jokes table, kept as a members-only page.</p>
       <ul className="space-y-4">
         {jokes?.map((j: Joke) => (
-          <li key={j.id} className="rounded-lg border p-4">
+          <li key={j.id} className="rounded-xl border bg-card p-4">
             <p className="font-medium">{j.setup}</p>
-            <p className="text-gray-600">{j.punchline}</p>
+            <p className="text-muted">{j.punchline}</p>
           </li>
         ))}
       </ul>
