@@ -4,6 +4,8 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import Header from "@/app/components/Header";
+import MobileTabBar from "@/app/components/MobileTabBar";
+import { getCurrentProfile } from "@/lib/profile";
 
 export const metadata: Metadata = {
   title: {
@@ -18,7 +20,8 @@ export const viewport: Viewport = {
   themeColor: "#000000",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const { user } = await getCurrentProfile();
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
@@ -32,10 +35,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <div id="main" className="flex flex-1 flex-col">
           {children}
         </div>
-        <footer className="mt-16 border-t bg-card">
-          <div className="mx-auto flex max-w-2xl flex-col gap-2 px-4 py-6 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
-            <p>Captions are written by Google Gemini. Every post shows the exact prompt it was given.</p>
+        <footer className="mt-16 border-t bg-card pb-20 md:pb-0">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-sm text-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <p>Captions are written by Google Gemini in five NYC subway voices. Votes are by Columbia students.</p>
             <nav className="flex shrink-0 gap-4" aria-label="Footer">
+              <Link href="/race" className="hover:text-ink">
+                Race to Columbia
+              </Link>
               <Link href="/top" className="hover:text-ink">
                 Leaderboard
               </Link>
@@ -45,6 +51,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </nav>
           </div>
         </footer>
+        <MobileTabBar loggedIn={!!user} />
       </body>
     </html>
   );

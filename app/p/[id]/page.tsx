@@ -6,7 +6,7 @@ import { ShareButton } from "@/app/components/CopyButton";
 import OwnerTools from "./OwnerTools";
 import { getCurrentProfile } from "@/lib/profile";
 import { getPost } from "@/lib/posts";
-import { isVibe } from "@/lib/vibes";
+import { DEFAULT_VIBE, VIBE_KEYS, isVibe } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
 // "Write 3 more captions" calls Gemini from this page.
@@ -48,7 +48,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
   const top = post.captions.find((c) => c.id === post.leading_caption_id) ?? post.captions[0];
 
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">
+    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
       <Link href="/" className="text-sm font-medium text-muted hover:text-ink">
         Back to the feed
       </Link>
@@ -91,7 +91,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
       {mine && (
         <OwnerTools
           postId={post.id}
-          currentVibe={isVibe(post.vibe) ? post.vibe : "chronically-online"}
+          currentVibe={isVibe(post.vibe) && VIBE_KEYS.includes(post.vibe) ? post.vibe : DEFAULT_VIBE}
           captionCount={post.captions.length}
           maxCaptions={MAX_CAPTIONS}
         />

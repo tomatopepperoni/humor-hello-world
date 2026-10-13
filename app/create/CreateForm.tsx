@@ -6,7 +6,7 @@ import { generateCaptions, type GenerateState } from "@/app/actions/captions";
 import { VibeBullet } from "@/app/components/LineBullet";
 import { resizeImage } from "@/lib/resize-image";
 import ServiceAlert from "@/app/components/ServiceAlert";
-import { VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
+import { DEFAULT_VIBE, VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -41,7 +41,17 @@ function Working({ hasPhoto }: { hasPhoto: boolean }) {
   );
 }
 
-export default function CreateForm({ userId, theme }: { userId: string; theme: string }) {
+export default function CreateForm({
+  userId,
+  theme,
+  runsLeft,
+  dailyRuns,
+}: {
+  userId: string;
+  theme: string;
+  runsLeft: number;
+  dailyRuns: number;
+}) {
   const [state, formAction, submitting] = useActionState<GenerateState, FormData>(generateCaptions, {});
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -51,7 +61,7 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [imagePath, setImagePath] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-  const [vibe, setVibe] = useState<Vibe>("chronically-online");
+  const [vibe, setVibe] = useState<Vibe>(DEFAULT_VIBE);
   const [context, setContext] = useState("");
 
   async function upload(original: File) {
@@ -108,7 +118,8 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
   }
 
   const hasInput = imagePath !== "" || context.trim() !== "";
-  const canSubmit = !submitting && !uploading && hasInput;
+  const outOfRuns = runsLeft <= 0 || !!state.limit;
+  const canSubmit = !submitting && !uploading && hasInput && !outOfRuns;
 
   return (
     <form action={formAction} className="space-y-7">
@@ -119,7 +130,11 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
         {/* Photo */}
         <div>
           <p className="text-[15px] font-semibold">
-            Photo <span className="font-normal text-muted">(optional)</span>
+            Photo
+          </p>
+          <p className="mt-0.5 text-sm text-muted">
+            The photo is the meme: each caption is shown on it as its own card. No photo? What you write below becomes
+            a station-sign card instead.
           </p>
           <input
             ref={inputRef}
@@ -171,7 +186,7 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
                 <path d="M8 6l1.5-2h5L16 6" />
               </svg>
               <span className="mt-2 text-[15px] font-medium">{uploading ? "Uploading…" : "Add a photo"}</span>
-              <span className="mt-0.5 text-sm text-muted">Tap to choose, or drop one here. Big photos are resized for you.</span>
+              <span className="mt-0.5 text-sm text-muted">Tap to choose, or drop one here. Big phone photos are resized for you.</span>
             </label>
           )}
           {uploadError && (
@@ -184,7 +199,7 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
         {/* Context */}
         <div>
           <label htmlFor="context" className="text-[15px] font-semibold">
-            What happened? <span className="font-normal text-muted">{imagePath ? "(optional)" : "(or add a photo)"}</span>
+            What happened? <span className="font-normal text-muted">{imagePath ? "(optional, gives the captions context)" : "(required without a photo)"}</span>
           </label>
           <textarea
             id="context"
@@ -201,14 +216,15 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
 
         {/* Vibe */}
         <fieldset>
-          <legend className="text-[15px] font-semibold">Pick a vibe</legend>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <legend className="text-[15px] font-semibold">Pick a subway voice</legend>
+          <p className="mt-0.5 text-sm text-muted">Each voice is a line. Same moment, different ride.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {VIBE_KEYS.map((k) => {
               const on = vibe === k;
               return (
                 <label
                   key={k}
-                  className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-bullet-blue ${
+                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-bullet-blue ${
                     on ? "border-ink bg-ink text-white" : "bg-card hover:border-ink/40"
                   }`}
                 >
@@ -217,6 +233,9 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
                   <span className="min-w-0">
                     <span className="block font-semibold">{VIBES[k].label}</span>
                     <span className={`block text-sm ${on ? "text-white/75" : "text-muted"}`}>{VIBES[k].blurb}</span>
+                    <span className={`mt-2 block text-[13px] italic leading-snug ${on ? "text-white/90" : "text-ink/70"}`}>
+                      {VIBES[k].sample}
+                    </span>
                   </span>
                 </label>
               );
@@ -245,9 +264,14 @@ export default function CreateForm({ userId, theme }: { userId: string; theme: s
             disabled={!canSubmit}
             className="w-full rounded-full bg-metro px-5 py-3.5 text-base font-semibold text-ink transition-colors hover:bg-metro-deep disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-muted"
           >
-            {state.error ? "Try again" : "Write 3 captions"}
+            {outOfRuns ? "No caption runs left today" : state.error ? "Try again" : "Write 3 captions"}
           </button>
-          {!hasInput && <p className="mt-2 text-center text-sm text-muted">Add a photo or say what happened to continue.</p>}
+          <p className="mt-2 text-center text-sm text-muted">
+            {!hasInput && !outOfRuns ? "Add a photo or say what happened to continue. " : ""}
+            {outOfRuns
+              ? `You've used all ${dailyRuns} caption runs for today. More at midnight.`
+              : `${runsLeft} of ${dailyRuns} caption runs left today.`}
+          </p>
         </div>
       )}
     </form>

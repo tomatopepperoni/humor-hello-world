@@ -13,7 +13,7 @@ them up or down; the best themed post of the day tops the board.
 | 2 | Supabase `jokes` table, `/jokes` list page |
 | 3 | Google login (Supabase Auth), `profiles` table + trigger, onboarding, `/profile` with photo upload, protected `/jokes` route |
 | 4 | AI caption generation (Gemini) saved to `posts` / `captions` with the exact prompt, up/down **votes** table, daily theme + leaderboard, **RLS on every table** |
-| 5 | Iteration: fixed truncated Gemini output, subway-sign redesign, copy/share captions, "write 3 more" for owners, profile with your posts and points, loading/error/404 screens |
+| 5 | Feedback iteration: complete captions (parser fix), one meme card per caption in a responsive grid, five subway-voice caption styles, up/down counts read back from the DB, Race to Columbia map + badges, daily Gemini limit, prompts hidden from the API, subway-sign redesign |
 
 ## Design concept: the city's own wayfinding
 
@@ -26,7 +26,10 @@ what a feed you scroll through between classes needs.
 | Subway element | Where it shows up | Why |
 |---|---|---|
 | Black station-sign band with the thin white rule along the top | Header, today's theme, the "enter today's theme" switch, notices | Black means "the system is talking" (theme, status, navigation); white cards are what people posted. |
-| Line bullets (letter in a coloured circle) | The four vibes: **O** Chronically online (purple), **R** Roast me (red), **M** Midwest nice (yellow), **C** Main character (blue) | A vibe is a line: same destination (your moment), different route. When a caption came from a different vibe than the post, it carries that vibe's bullet. Line colours are used only for vibes, so a colour always means something. |
+| Line bullets (letter in the line's official colour) | The five caption voices: **1** Conductor (red), **G** Service alert (lime), **A** Showtime (blue), **L** Overheard (grey), **R** Roast me (yellow) | A voice is a line: same destination (your moment), different ride. Each meme carries its voice's bullet. The 1 is Columbia's own line. Week-4 vibes stay on old posts but are no longer offered. |
+| Strip map above the subway doors | **Race to Columbia** (`/race`): the 1 line from South Ferry to 116 St with everyone's avatar at their stop; vertical line diagram on phones | Turns voting into travel: every vote is a stop, the destination is campus. |
+| Express-service diamonds | Badges | The MTA marks express service with a diamond; badges mark the riders who went further. |
+| Ads in a subway car (a photo with one line of copy) | Meme cards: one photo + one caption, in a grid | Each caption competes on its own, and several fit on one screen. A post without a photo is set as a station sign so it still has an image. |
 | MetroCard yellow | The one primary action on each screen (Post, Write 3 captions, Sign in, Try again), rank bullets, leading caption | One yellow thing per screen tells you what to do next. |
 | Route map | "How it works": three stations connected by a line | It is a real sequence (post → Gemini writes → everyone votes), so it is drawn as stops on one line. |
 | Platform countdown clock (amber digits) | "Next theme in 11 h 12 min" plus tomorrow's theme | A reason to come back, framed like checking when the next train arrives. |
@@ -64,6 +67,12 @@ npm run dev
 
 ## Week 5 – Get feedback and iterate
 
+**Setup:** run [`supabase/week5.sql`](supabase/week5.sql) once in the Supabase SQL
+editor (adds `captions.vibe`, hides `captions.prompt` from clients, creates the
+`rider_stats` view for the race). The app also runs before it's applied: it falls
+back to reading the voice from the prompt and estimates the race from public data.
+Optional env: `DAILY_CAPTION_RUNS` (default 10).
+
 ### What testing the live week-4 build showed
 
 - **Both posts in production had broken captions.** One caption was literally `[`,
@@ -100,7 +109,7 @@ npm run dev
   link). Post pages set Open Graph tags so a shared link previews the leading caption
   and the photo.
 - The leading caption is highlighted. Feed cards show the top 3; the post page shows all.
-- Owners get **Write 3 more captions** in any vibe (the prompt lists the existing
+- Owners get **Write 3 more captions** in any voice (the prompt lists the existing
   captions so they aren't repeated; max 9 per post) and a two-step delete.
 - Create: drag-and-drop or tap upload, photos resized to ≤1600 px JPEG in the browser
   (phone photos upload faster and fit the bucket), vibe cards that say what each vibe
@@ -116,14 +125,35 @@ npm run dev
 
 **Visual design**
 - One visual language taken from NYC subway signage: black sign bands with a thin white
-  rule, the four vibes as line bullets (O, R, M, C), MetroCard yellow for the one primary
+  rule, the caption voices as line bullets, MetroCard yellow for the one primary
   action on each screen, green/grey for up/down votes. Geist for all type.
 - Captions are the largest text on a card. Phone layout puts the caption first and the
   vote/copy row under it.
 
-### Feedback group notes
+### PM comments on week 4 → what changed
 
-_Add the PM's and group's comments from this week's session here._
+| PM comment | Change |
+|---|---|
+| AI captions are saved broken (a "[" as a caption, sentences cut off) | `maxOutputTokens` 1024 → 8192 (thinking tokens were eating the budget), a parser that only accepts complete strings and requires 3, retries across models, and cleanup of the broken rows already in the DB. |
+| Not clear what the site is on first open | The home page now opens with "Your week in New York, captioned by the subway." and one paragraph on what you do here, next to today's theme. Logged-out visitors also get a three-stop "How it works". |
+| Show several memes on one screen | The feed and leaderboard are grids (2 columns on tablets/laptops, 3–4 on wide screens). |
+| Make images a core part of each post | Every card leads with the photo. The create form puts the photo first and explains it. A post without a photo gets a station-sign image of its text, so no card is a bare one-liner. |
+| Use responsive design, not a fixed box in the center | Layout widens to 1280 px with a sidebar on desktop, a single column on phones, and a bottom tab bar on phones. |
+| Hide the prompt from users, keep saving it | The prompt is no longer shown anywhere. It's still saved on every caption, and `supabase/week5.sql` revokes client read access to that column (the voice moved to its own `vibe` column). |
+| One photo gets different votes per caption; split the post per caption | Each caption is now its own meme card (photo + that caption) with its own votes, and Top today / all-time rank memes, not posts. The post page still shows all captions for that photo. |
+| Double-check RLS on every table | Checked against production with the public anon key: reading `votes`, `profiles`, `jokes` returns nothing; inserting a vote or post is rejected (42501); updating captions/profiles and deleting posts touches 0 rows. Only `posts`, `captions` (minus `prompt` after week5.sql) and the count views are public. |
+
+### Feedback group session (week 5) → what changed
+
+| Feedback | Change |
+|---|---|
+| Make it responsive; the nav bar is stuck to the top | Header hides while you scroll down and comes back when you scroll up. On phones the navigation moves to a bottom tab bar. Desktop gets a wide layout with a sidebar. |
+| Humor without an image is fine but can be boring; make the caption concept more specific | Captions now speak in five NYC-subway voices, each a real line bullet: **1** Conductor, **G** Service alert, **A** Showtime, **L** Overheard, **R** Roast me. The picker shows a sample of each. Text-only posts become a station-sign image. |
+| Up/down votes must update the DB consistently (from −2, one upvote showed 0) | Switching your own ▼ to ▲ changes the net by 2, which looked like a bug. Buttons now show the ▲ and ▼ counts separately, and after each click the server reads the counts back from `caption_scores` and the buttons show exactly that. |
+| Another group made a 3D map / "who gets to Columbia fastest" / build a line with the subway | **Race to Columbia**: a weekly race up the 1 train from South Ferry to 116 St. +1 stop per vote you cast, +2 per post, +1 per upvote your captions get. Strip-map of the 1 line with everyone's avatar at their stop (`/race`), standings, a sidebar summary on the home page. |
+| Badges to raise ratings | Five badges (First ride, Straphanger, Rush hour, Crowd pleaser, Made it to Columbia), three of them for voting or being voted on, shown in standings and on your profile. |
+| On a paid API, set limits | Each account gets 10 caption runs a day (`DAILY_CAPTION_RUNS`), shown on the create page; the server enforces it before calling Gemini. |
+| Gemini returned 503 "high demand" during the demo | Requests now rotate across six models (including the `gemini-flash-latest` aliases) before retrying, inside a 52 s budget, and an overload shows as a "Delays on the Gemini line" notice with Try again. |
 
 ## Week 4 – Rating app
 
@@ -152,14 +182,14 @@ and the vote data tells you which prompt/vibe combinations actually land.
   today's theme. Server action `generateCaptions` downloads the image, calls Gemini
   (`gemini-3.6-flash`, multimodal; falls back to 3.5-flash / 3.5-flash-lite when a model returns 503), parses a JSON array of 3 captions and inserts one
   `posts` row + three `captions` rows. **The full prompt and model name are saved on
-  every caption row** and visible under "Prompt" on each post page.
+  every caption row** (week 5: no longer shown to users, see above).
 - **Vote** (`VoteButtons` → server action `vote`): inserts a row in `votes`
   (`caption_id`, `user_id`, `value ∈ {-1, 1}`, unique per user+caption). Clicking the
   same arrow again deletes the row, the other arrow updates it. Optimistic UI, then
   `router.refresh()`. Logged-out users are sent to `/login?next=…`.
 - **Feed** (`/`): today's theme hero, "Top today" (themed posts ranked by total
   caption score), "Fresh" (latest 20). **Leaderboard** (`/top`): top posts today +
-  best captions of all time. **Post page** (`/p/[id]`): captions, votes, prompt, and
+  best captions of all time. **Post page** (`/p/[id]`): captions, votes, and
   delete for the owner.
 - **Data** lives in `posts`, `captions`, `votes`; read helpers in `lib/posts.ts`
   join scores from the `caption_scores` view and author names from `public_profiles`.
@@ -177,6 +207,10 @@ Run [`supabase/week4_rating.sql`](supabase/week4_rating.sql). It enables RLS on
 | `captions` | everyone | own, and only onto your own post | – (immutable) | own |
 | `votes` | **own votes only** | own | own | own |
 
+Week 5 (`supabase/week5.sql`): clients can read every `captions` column except
+`prompt` (column privileges on top of RLS), and the `rider_stats` view exposes only
+per-person counts for the race.
+
 Totals are exposed through the `caption_scores` view and names/avatars through the
 `public_profiles` view (both `security_invoker = false`), so nobody can read other
 users' individual votes, emails or bios. Storage: `photos` bucket is public-read,
@@ -188,30 +222,10 @@ upload/delete only inside `<user id>/`.
 2. Get a free Gemini key at https://aistudio.google.com/apikey.
 3. Add `GEMINI_API_KEY` to `.env.local` and to Vercel → Settings → Environment Variables, then redeploy.
 
-### Feedback group session – PM notes and what changed
+### Feedback
 
-Notes from the session with my PM, and the iteration that followed:
-
-1. **"I'd never type a description if I already have a photo – make the text optional."**
-   → Photo *or* text is enough; the Generate button stays disabled until one exists.
-2. **"The captions all sound the same, like a brand account."**
-   → Replaced the single prompt with four vibes, each a separate instruction block,
-   and told the model to give each of the three captions a different angle.
-3. **"Why would I come back tomorrow?"**
-   → Added the daily theme (rotates at midnight NY time), the opt-in "enter today's
-   theme" checkbox on the create form, and the "Top today" board that only counts
-   themed posts from today.
-4. **"I clicked upvote twice and it just stayed orange."**
-   → Second click on the same arrow now removes the vote (row deleted), switching
-   arrows updates the row; the score updates optimistically.
-5. **"Let me look before I log in."**
-   → The feed and leaderboard are public; only `/create` and voting require login,
-   and the vote buttons send you to `/login?next=<current page>`.
-6. **"Show me the prompt – I want to know what it was told."**
-   → Each caption on the post page has a collapsible "Prompt · model" panel.
-7. **"Roast mode shouldn't be able to be mean about how someone looks."**
-   → Roast instruction explicitly limits roasting to the situation / choices, and the
-   Gemini harassment safety threshold is left on (`BLOCK_ONLY_HIGH`).
+The PM's comments on this version and what was done about them are in the
+week 5 section above.
 
 ## Week 3 – Auth setup checklist
 
@@ -274,7 +288,12 @@ The app always redirects to **`/auth/callback`** with no extra query params othe
 | `lib/posts.ts` | feed / leaderboard queries (joins scores + authors) |
 | `app/actions/captions.ts` | server actions: `generateCaptions`, `vote`, `deletePost` |
 | `app/create` | upload photo + describe moment + pick vibe → generate |
-| `app/p/[id]` | single post with captions, votes and the saved prompt |
+| `app/p/[id]` | single post: the photo with all its captions and votes |
+| `app/race`, `app/components/Race.tsx`, `lib/race.ts` | Race to Columbia: strip map, standings, badges |
+| `app/components/MemeCard.tsx` | one caption + photo card used in the feed and leaderboard |
+| `app/components/HeaderShell.tsx`, `MobileTabBar.tsx` | header that hides on scroll; bottom tab bar on phones |
+| `lib/limits.ts` | daily caption-run limit per account |
+| `supabase/week5.sql` | `captions.vibe`, prompt column hidden from clients, `rider_stats` view |
 | `app/top` | leaderboard |
 | `app/components/PostCard.tsx`, `VoteButtons.tsx` | feed card and the up/down vote control |
 | `app/components/LineBullet.tsx` | subway-style bullets for vibes and ranks |

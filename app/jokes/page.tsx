@@ -25,7 +25,7 @@ export default async function JokesPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">
+    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
       <h1 className="mb-1 text-[28px] font-bold tracking-tight">Jokes</h1>
       <p className="mb-6 text-[15px] text-muted">The week 2 jokes table, kept as a members-only page.</p>
       <ul className="space-y-4">

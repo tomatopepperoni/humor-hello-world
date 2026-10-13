@@ -4,10 +4,14 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { GeminiError, generateText, parseCaptionList } from "@/lib/gemini";
-import { VIBES, isVibe, todaysTheme, type Vibe } from "@/lib/vibes";
+import { DEFAULT_VIBE, VIBES, isVibe, todaysTheme, type Vibe } from "@/lib/vibes";
+import { DAILY_RUNS, runsLeftToday } from "@/lib/limits";
 
 /** `busy`: Gemini was overloaded / rate-limited, so trying again shortly should work. */
-export type GenerateState = { error?: string; busy?: boolean };
+export type GenerateState = { error?: string; busy?: boolean; limit?: boolean };
+
+const limitMessage = () =>
+  `You've used all ${DAILY_RUNS} caption runs for today. The count resets at midnight New York time, and you can still vote on everyone else's posts.`;
 
 const CAPTIONS_PER_ROUND = 3;
 const MAX_CAPTIONS_PER_POST = 9;
@@ -22,8 +26,8 @@ function buildPrompt(opts: {
   avoid?: string[];
 }) {
   const lines = [
-    "You write short social-media captions for college students in New York City.",
-    `Audience: a Columbia undergrad who is new to NYC, lives in the dorms, and is online all day.`,
+    "You write short, funny captions for Captioned NYC, where college students post moments from their week in New York and the captions speak in the voices of the city's subway.",
+    `Audience: a Columbia undergrad who is new to NYC, lives in the dorms, rides the 1 train, and is online all day.`,
     // Keep this exact shape ("Vibe: <label>. …"): vibeFromPrompt() reads it back.
     `Vibe: ${VIBES[opts.vibe].label}. ${VIBES[opts.vibe].instruction}`,
   ];
@@ -37,7 +41,7 @@ function buildPrompt(opts: {
     );
   }
   lines.push(
-    `Write ${CAPTIONS_PER_ROUND} different captions. Each under 140 characters, no hashtags, no emojis unless the vibe calls for one, each with a different angle.`,
+    `Write ${CAPTIONS_PER_ROUND} different captions. Each under 140 characters, no hashtags, no emojis, each with a different angle. Every caption must be funny on its own, even to someone who can't see the photo, and must mention a concrete detail of this moment.`,
     `Respond with ONLY a JSON array of ${CAPTIONS_PER_ROUND} strings.`
   );
   return lines.join("\n");
@@ -58,6 +62,39 @@ async function askGemini(prompt: string, image?: { mimeType: string; base64: str
 }
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>;
+
+type CaptionInsert = {
+  post_id: string;
+  user_id: string;
+  text: string;
+  prompt: string;
+  model: string;
+  position: number;
+  vibe: Vibe;
+};
+
+/**
+ * Saves captions with their voice in captions.vibe. Before supabase/week5.sql
+ * adds that column, PostgREST rejects it (PGRST204), so retry without it: the
+ * voice can still be read back from the saved prompt.
+ */
+async function insertCaptions(supabase: SupabaseServer, rows: CaptionInsert[]) {
+  const { error } = await supabase.from("captions").insert(rows);
+  if (error && (error.code === "PGRST204" || error.code === "42703" || /vibe/.test(error.message))) {
+    // Drop the key entirely: supabase-js lists every key it sees as a column.
+    const legacy = rows.map(({ post_id, user_id, text, prompt, model, position }) => ({
+      post_id,
+      user_id,
+      text,
+      prompt,
+      model,
+      position,
+    }));
+    const { error: retry } = await supabase.from("captions").insert(legacy);
+    return retry;
+  }
+  return error;
+}
 
 async function downloadImage(supabase: SupabaseServer, path: string) {
   const { data: blob, error } = await supabase.storage.from("photos").download(path);
@@ -82,7 +119,7 @@ export async function generateCaptions(
   if (!user) redirect("/login?next=/create");
 
   const vibeRaw = String(formData.get("vibe") ?? "");
-  const vibe = isVibe(vibeRaw) ? vibeRaw : "chronically-online";
+  const vibe = isVibe(vibeRaw) ? vibeRaw : DEFAULT_VIBE;
   const context = String(formData.get("context") ?? "").trim().slice(0, MAX_CONTEXT) || null;
   const imagePath = String(formData.get("image_path") ?? "").trim() || null;
   const imageUrl = String(formData.get("image_url") ?? "").trim() || null;
@@ -96,6 +133,8 @@ export async function generateCaptions(
   if (imagePath && !imagePath.startsWith(`${user.id}/`)) {
     return { error: "That photo upload can't be used. Upload it again." };
   }
+
+  if ((await runsLeftToday(supabase, user.id)) <= 0) return { error: limitMessage(), limit: true };
 
   // 1. Fetch the uploaded image (if any) for the multimodal prompt.
   let image: { mimeType: string; base64: string } | undefined;
@@ -118,7 +157,8 @@ export async function generateCaptions(
     .single();
   if (postErr || !post) return { error: postErr?.message ?? "Could not save the post." };
 
-  const { error: capErr } = await supabase.from("captions").insert(
+  const capErr = await insertCaptions(
+    supabase,
     ai.captions.map((text, position) => ({
       post_id: post.id,
       user_id: user.id,
@@ -126,6 +166,7 @@ export async function generateCaptions(
       prompt,
       model: ai.model,
       position,
+      vibe,
     }))
   );
   if (capErr) {
@@ -138,7 +179,7 @@ export async function generateCaptions(
   redirect(`/p/${post.id}?new=1`);
 }
 
-export type MoreState = { error?: string; busy?: boolean; added?: number; at?: number };
+export type MoreState = { error?: string; busy?: boolean; limit?: boolean; added?: number; at?: number };
 
 /**
  * Server action: the post's owner asks for 3 more captions, optionally in a
@@ -154,7 +195,7 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
 
   const postId = String(formData.get("post_id") ?? "");
   const vibeRaw = String(formData.get("vibe") ?? "");
-  const vibe: Vibe = isVibe(vibeRaw) ? vibeRaw : "chronically-online";
+  const vibe: Vibe = isVibe(vibeRaw) ? vibeRaw : DEFAULT_VIBE;
 
   const { data: post } = await supabase
     .from("posts")
@@ -168,6 +209,8 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
   if (existing.length >= MAX_CAPTIONS_PER_POST) {
     return { error: `A post can have up to ${MAX_CAPTIONS_PER_POST} captions. Delete it and post again for a fresh set.` };
   }
+
+  if ((await runsLeftToday(supabase, user.id)) <= 0) return { error: limitMessage(), limit: true };
 
   let image: { mimeType: string; base64: string } | undefined;
   if (post.image_path) {
@@ -195,8 +238,9 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
     prompt,
     model: ai.model,
     position: start + i,
+    vibe,
   }));
-  const { error } = await supabase.from("captions").insert(rows);
+  const error = await insertCaptions(supabase, rows);
   if (error) return { error: error.message };
 
   revalidatePath(`/p/${post.id}`);
@@ -204,7 +248,7 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
   return { added: rows.length, at: Date.now() };
 }
 
-export type VoteResult = { error?: string; my_vote?: number };
+export type VoteResult = { error?: string; my_vote?: number; upvotes?: number; downvotes?: number; score?: number };
 
 /**
  * Server action: upvote / downvote a caption.
@@ -246,11 +290,24 @@ export async function vote(captionId: string, value: 1 | -1): Promise<VoteResult
     my_vote = value;
   }
 
+  // Read the totals back from the database so the buttons show what was saved.
+  const { data: totals } = await supabase
+    .from("caption_scores")
+    .select("upvotes, downvotes, score")
+    .eq("caption_id", captionId)
+    .maybeSingle();
+
   revalidatePath("/");
   revalidatePath("/top");
+  revalidatePath("/race");
   revalidatePath("/profile");
   revalidatePath("/p/[id]", "page");
-  return { my_vote };
+  return {
+    my_vote,
+    upvotes: totals?.upvotes ?? 0,
+    downvotes: totals?.downvotes ?? 0,
+    score: totals?.score ?? 0,
+  };
 }
 
 /** Server action: delete one of your own posts (captions + votes cascade). */

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 
 export type Profile = {
@@ -9,8 +10,11 @@ export type Profile = {
   bio: string | null;
 };
 
-/** Returns the current user and their profile row (or nulls if logged out). */
-export async function getCurrentProfile() {
+/**
+ * Returns the current user and their profile row (or nulls if logged out).
+ * Cached per request: the layout, header and page all ask for it.
+ */
+export const getCurrentProfile = cache(async function getCurrentProfile() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -24,4 +28,4 @@ export async function getCurrentProfile() {
     .maybeSingle<Profile>();
 
   return { user, profile };
-}
+});

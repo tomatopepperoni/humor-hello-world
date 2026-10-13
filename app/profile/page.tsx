@@ -8,6 +8,8 @@ import { displayName, timeAgo } from "@/app/components/PostCard";
 import { VibeBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
 import { getMyStats, getPostsByUser, type PostWithCaptions } from "@/lib/posts";
+import { getRace } from "@/lib/race";
+import { BadgeLegend, ProgressLine, riderStatus } from "@/app/components/Race";
 import { isVibe } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
@@ -58,12 +60,17 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
   if (!user) redirect("/login?next=/profile");
   const { deleted } = await searchParams;
 
-  const [posts, stats] = await Promise.all([getPostsByUser(user.id), getMyStats(user.id)]);
+  const [posts, stats, race] = await Promise.all([
+    getPostsByUser(user.id),
+    getMyStats(user.id),
+    getRace().catch(() => null),
+  ]);
+  const me = race?.riders.find((r) => r.user_id === user.id);
   const points = posts.reduce((sum, p) => sum + p.total_score, 0);
   const fullName = [profile?.first_name ? displayName(profile.first_name) : null, profile?.last_name].filter(Boolean).join(" ");
 
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">
+    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
       {deleted === "1" && (
         <p role="status" className="mb-4 rounded-xl border bg-card p-3 text-sm">
           Post deleted.
@@ -85,6 +92,22 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
         <Stat value={points} label="points earned" />
         <Stat value={stats.votes} label="votes cast" />
       </div>
+
+      <section aria-labelledby="ride" className="mt-8 rounded-2xl border bg-card p-4 sm:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="ride" className="text-lg font-bold">
+            {me && me.points_week > 0 ? riderStatus(me) : "Not on the train yet this week"}
+          </h2>
+          <Link href="/race" className="text-sm font-semibold text-bullet-blue hover:underline">
+            Race to Columbia
+          </Link>
+        </div>
+        <div className="mt-3">
+          <ProgressLine station={me?.station ?? 0} />
+        </div>
+        <h3 className="mb-3 mt-6 text-[15px] font-semibold">Badges</h3>
+        <BadgeLegend rider={me} />
+      </section>
 
       <section aria-labelledby="my-posts" className="mt-10">
         <div className="mb-3 flex items-baseline justify-between gap-3">

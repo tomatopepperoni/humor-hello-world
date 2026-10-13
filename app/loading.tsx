@@ -1,7 +1,7 @@
 /** Skeleton while a page's data loads (feed, post, leaderboard, profile). */
 export default function Loading() {
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6" aria-busy="true" aria-label="Loading">
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6" aria-busy="true" aria-label="Loading">
       <div className="h-40 animate-pulse rounded-xl bg-ink/10 motion-reduce:animate-none" />
       {[0, 1].map((i) => (
         <div key={i} className="mt-6 rounded-2xl border bg-card p-4">

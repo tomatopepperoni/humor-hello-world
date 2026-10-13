@@ -43,7 +43,7 @@ export default function OwnerTools({
         <form action={formAction} className="mt-3">
           <input type="hidden" name="post_id" value={postId} />
           <fieldset disabled={pending}>
-            <legend className="text-sm text-muted">Get three more in any vibe. They won&apos;t repeat the ones above.</legend>
+            <legend className="text-sm text-muted">Get three more in any subway voice. They won&apos;t repeat the ones above.</legend>
             <div className="mt-3 flex flex-wrap gap-2">
               {VIBE_KEYS.map((k) => (
                 <label
