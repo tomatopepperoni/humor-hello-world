@@ -5,6 +5,7 @@ import { BadgeLegend, BadgeRow, ProgressLine, RaceMap, ordinal, riderStatus } fr
 import { LineBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
 import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
+import RaceMap3D, { type MapRider } from "./RaceMap3D";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Race to Columbia" };
@@ -22,6 +23,14 @@ export default async function RacePage() {
   const active = race.riders.filter((r) => r.points_week > 0);
   const myRank = me ? active.findIndex((r) => r.user_id === meId) + 1 : 0;
   const left = me ? Math.max(0, STOPS_TO_COLUMBIA - me.points_week) : STOPS_TO_COLUMBIA;
+  const mapRiders: MapRider[] = race.riders.map((r) => ({
+    id: r.user_id,
+    name: displayName(r.first_name),
+    avatarUrl: r.avatar_url,
+    station: r.station,
+    points: r.points_week,
+    me: r.user_id === meId,
+  }));
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
@@ -90,13 +99,18 @@ export default async function RacePage() {
       )}
 
       <section aria-labelledby="map" className="mt-8">
-        <h2 id="map" className="mb-3 text-xl font-bold tracking-tight">
-          The 1 line right now
-        </h2>
-        <RaceMap riders={race.riders} meId={meId} />
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="map" className="text-xl font-bold tracking-tight">
+            The 1 line right now
+          </h2>
+          <p className="text-sm text-muted">Every rider is a train riding to their stop. Drag to turn the map.</p>
+        </div>
+        <RaceMap3D riders={mapRiders}>
+          <RaceMap riders={race.riders} meId={meId} />
+        </RaceMap3D>
         {!race.exact && (
           <p className="mt-2 text-xs text-muted">
-            Estimated from posts and upvotes. Run supabase/week5_race.sql to count votes too.
+            Estimated from posts and upvotes. Run supabase/week5.sql to count votes too.
           </p>
         )}
       </section>

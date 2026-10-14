@@ -1,5 +1,8 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
+
+export { STATIONS, STOPS_TO_COLUMBIA };
 
 /**
  * Race to Columbia: a weekly race up the 1 train, South Ferry → 116 St–Columbia.
@@ -11,34 +14,6 @@ import { createClient } from "@/lib/supabase/server";
  * the page still works.
  */
 
-export const STATIONS = [
-  "South Ferry",
-  "Rector St",
-  "WTC Cortlandt",
-  "Chambers St",
-  "Franklin St",
-  "Canal St",
-  "Houston St",
-  "Christopher St–Stonewall",
-  "14 St",
-  "18 St",
-  "23 St",
-  "28 St",
-  "34 St–Penn Station",
-  "Times Sq–42 St",
-  "50 St",
-  "59 St–Columbus Circle",
-  "66 St–Lincoln Center",
-  "72 St",
-  "79 St",
-  "86 St",
-  "96 St",
-  "103 St",
-  "Cathedral Pkwy–110 St",
-  "116 St–Columbia University",
-] as const;
-
-export const STOPS_TO_COLUMBIA = STATIONS.length - 1; // 23
 
 export type Rider = {
   user_id: string;

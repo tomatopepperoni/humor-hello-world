@@ -27,7 +27,7 @@ what a feed you scroll through between classes needs.
 |---|---|---|
 | Black station-sign band with the thin white rule along the top | Header, today's theme, the "enter today's theme" switch, notices | Black means "the system is talking" (theme, status, navigation); white cards are what people posted. |
 | Line bullets (letter in the line's official colour) | The five caption voices: **1** Conductor (red), **G** Service alert (lime), **A** Showtime (blue), **L** Overheard (grey), **R** Roast me (yellow) | A voice is a line: same destination (your moment), different ride. Each meme carries its voice's bullet. The 1 is Columbia's own line. Week-4 vibes stay on old posts but are no longer offered. |
-| Strip map above the subway doors | **Race to Columbia** (`/race`): the 1 line from South Ferry to 116 St with everyone's avatar at their stop; vertical line diagram on phones | Turns voting into travel: every vote is a stop, the destination is campus. |
+| Strip map above the subway doors | **Race to Columbia** (`/race`): a 3D map of the 1 line laid on Manhattan (Hudson, Central Park, the street grid). Every rider is a train that rides from South Ferry to their stop (yours is yellow, "You"); two more 1 trains run up and down. The track is red as far as anyone has ridden this week and grey beyond ("next to build"), and pillars show how many riders passed each stop. Falls back to a flat line diagram without WebGL. | Turns voting into travel: every vote is a stop, the destination is campus, and the map is built by everyone riding it. |
 | Express-service diamonds | Badges | The MTA marks express service with a diamond; badges mark the riders who went further. |
 | Ads in a subway car (a photo with one line of copy) | Meme cards: one photo + one caption, in a grid | Each caption competes on its own, and several fit on one screen. A post without a photo is set as a station sign so it still has an image. |
 | MetroCard yellow | The one primary action on each screen (Post, Write 3 captions, Sign in, Try again), rank bullets, leading caption | One yellow thing per screen tells you what to do next. |
@@ -150,7 +150,7 @@ Optional env: `DAILY_CAPTION_RUNS` (default 10).
 | Make it responsive; the nav bar is stuck to the top | Header hides while you scroll down and comes back when you scroll up. On phones the navigation moves to a bottom tab bar. Desktop gets a wide layout with a sidebar. |
 | Humor without an image is fine but can be boring; make the caption concept more specific | Captions now speak in five NYC-subway voices, each a real line bullet: **1** Conductor, **G** Service alert, **A** Showtime, **L** Overheard, **R** Roast me. The picker shows a sample of each. Text-only posts become a station-sign image. |
 | Up/down votes must update the DB consistently (from −2, one upvote showed 0) | Switching your own ▼ to ▲ changes the net by 2, which looked like a bug. Buttons now show the ▲ and ▼ counts separately, and after each click the server reads the counts back from `caption_scores` and the buttons show exactly that. |
-| Another group made a 3D map / "who gets to Columbia fastest" / build a line with the subway | **Race to Columbia**: a weekly race up the 1 train from South Ferry to 116 St. +1 stop per vote you cast, +2 per post, +1 per upvote your captions get. Strip-map of the 1 line with everyone's avatar at their stop (`/race`), standings, a sidebar summary on the home page. |
+| Another group made a 3D map / "who gets to Columbia fastest" / build a line with the subway | **Race to Columbia**: a weekly race up the 1 train from South Ferry to 116 St. +1 stop per vote you cast, +2 per post, +1 per upvote your captions get. `/race` has a 3D map (three.js) where each rider's train rides to their current stop, the track is "built" as far as anyone has reached, and buttons to find your train, see the whole line, replay the week and zoom. Standings and a sidebar summary on the home page. |
 | Badges to raise ratings | Five badges (First ride, Straphanger, Rush hour, Crowd pleaser, Made it to Columbia), three of them for voting or being voted on, shown in standings and on your profile. |
 | On a paid API, set limits | Each account gets 10 caption runs a day (`DAILY_CAPTION_RUNS`), shown on the create page; the server enforces it before calling Gemini. |
 | Gemini returned 503 "high demand" during the demo | Requests now rotate across six models (including the `gemini-flash-latest` aliases) before retrying, inside a 52 s budget, and an overload shows as a "Delays on the Gemini line" notice with Try again. |
@@ -289,7 +289,8 @@ The app always redirects to **`/auth/callback`** with no extra query params othe
 | `app/actions/captions.ts` | server actions: `generateCaptions`, `vote`, `deletePost` |
 | `app/create` | upload photo + describe moment + pick vibe → generate |
 | `app/p/[id]` | single post: the photo with all its captions and votes |
-| `app/race`, `app/components/Race.tsx`, `lib/race.ts` | Race to Columbia: strip map, standings, badges |
+| `app/race`, `app/components/Race.tsx`, `lib/race.ts` | Race to Columbia: standings, badges, 2D fallback map |
+| `app/race/RaceMap3D.tsx`, `lib/line1.ts` | 3D map of the 1 line (three.js) and station coordinates |
 | `app/components/MemeCard.tsx` | one caption + photo card used in the feed and leaderboard |
 | `app/components/HeaderShell.tsx`, `MobileTabBar.tsx` | header that hides on scroll; bottom tab bar on phones |
 | `lib/limits.ts` | daily caption-run limit per account |

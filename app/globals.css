@@ -74,6 +74,15 @@
   animation: ride 2.4s ease-in-out infinite alternate;
 }
 
+/* 3D race map labels: on phones show only landmarks, avatars and "You". */
+@media (max-width: 639px) {
+  .map-minor,
+  .map-rider .map-name,
+  .map-name {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
