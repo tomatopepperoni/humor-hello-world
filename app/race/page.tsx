@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Avatar, displayName } from "@/app/components/PostCard";
-import { BadgeLegend, BadgeRow, ProgressLine, RaceMap, ordinal, riderStatus } from "@/app/components/Race";
+import { BadgeLegend, BadgeRow, ProgressLine, ordinal, riderStatus } from "@/app/components/Race";
 import { LineBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
-import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
-import RaceMap3D, { type MapRider } from "./RaceMap3D";
+import { STATIONS, STOPS_TO_COLUMBIA, getLineTraffic, getRace } from "@/lib/race";
+import SubwayMap, { type MapRider } from "./SubwayMap";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Race to Columbia" };
@@ -17,7 +17,7 @@ const RULES = [
 ];
 
 export default async function RacePage() {
-  const [{ user }, race] = await Promise.all([getCurrentProfile(), getRace()]);
+  const [{ user }, race, traffic] = await Promise.all([getCurrentProfile(), getRace(), getLineTraffic()]);
   const meId = user?.id ?? null;
   const me = race.riders.find((r) => r.user_id === meId);
   const active = race.riders.filter((r) => r.points_week > 0);
@@ -103,11 +103,9 @@ export default async function RacePage() {
           <h2 id="map" className="text-xl font-bold tracking-tight">
             The 1 line right now
           </h2>
-          <p className="text-sm text-muted">Every rider is a train riding to their stop. Drag to turn the map.</p>
+          <p className="text-sm text-muted">Every rider is a train on the 1. The other lines carry this week&apos;s memes.</p>
         </div>
-        <RaceMap3D riders={mapRiders}>
-          <RaceMap riders={race.riders} meId={meId} />
-        </RaceMap3D>
+        <SubwayMap riders={mapRiders} traffic={traffic} />
         {!race.exact && (
           <p className="mt-2 text-xs text-muted">
             Estimated from posts and upvotes. Run supabase/week5.sql to count votes too.

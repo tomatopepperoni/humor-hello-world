@@ -74,13 +74,61 @@
   animation: ride 2.4s ease-in-out infinite alternate;
 }
 
-/* 3D race map labels: on phones show only landmarks, avatars and "You". */
-@media (max-width: 639px) {
-  .map-minor,
-  .map-rider .map-name,
-  .map-name {
-    display: none;
+/* Subway map: lines draw themselves in once, Columbia's beacon pulses,
+   the arrivals board flips rows like a countdown clock. */
+@keyframes draw-line {
+  to {
+    stroke-dashoffset: 0;
   }
+}
+.line-draw {
+  animation: draw-line 1.6s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@keyframes beacon {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+.beacon {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: beacon 1.8s ease-out infinite;
+}
+
+.led {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: #ff9e1b;
+  text-shadow:
+    0 0 6px rgb(255 158 27 / 0.55),
+    0 0 1px #ffb54d;
+}
+@media (min-width: 640px) {
+  .led {
+    font-size: 17px;
+  }
+}
+
+@keyframes led-in {
+  from {
+    transform: translateY(70%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.led-row {
+  animation: led-in 0.45s ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {

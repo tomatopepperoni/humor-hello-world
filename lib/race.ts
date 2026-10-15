@@ -1,6 +1,8 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
+import { getPostsSince } from "@/lib/posts";
+import { VIBE_KEYS, type Vibe } from "@/lib/vibes";
 
 export { STATIONS, STOPS_TO_COLUMBIA };
 
@@ -154,4 +156,28 @@ export const BADGES: Badge[] = [
 
 export function badgesFor(r: Rider | undefined): Badge[] {
   return r ? BADGES.filter((b) => b.earned(r)) : [];
+}
+
+/* ---------- subway map traffic ---------- */
+
+export type MapMeme = { id: string; postId: string; text: string; author: string; score: number };
+
+/**
+ * This week's memes grouped by the voice (line) they were written in. The map
+ * runs more trains on a line the more memes it carries.
+ */
+export async function getLineTraffic(): Promise<Record<Vibe, MapMeme[]>> {
+  const out = Object.fromEntries(VIBE_KEYS.map((k) => [k, [] as MapMeme[]])) as unknown as Record<Vibe, MapMeme[]>;
+  const posts = await getPostsSince(weekStartNY()).catch(() => []);
+  for (const p of posts) {
+    const raw = p.author?.first_name ?? "Someone";
+    const author = raw === raw.toUpperCase() && raw.length > 1 ? raw[0] + raw.slice(1).toLowerCase() : raw;
+    for (const c of p.captions) {
+      const v = c.vibe ?? (VIBE_KEYS.includes(p.vibe as Vibe) ? (p.vibe as Vibe) : null);
+      if (!v || !out[v]) continue;
+      out[v].push({ id: c.id, postId: p.id, text: c.text, author, score: c.score });
+    }
+  }
+  for (const k of VIBE_KEYS) out[k] = out[k].sort((a, b) => b.score - a.score).slice(0, 12);
+  return out;
 }

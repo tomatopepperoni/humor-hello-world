@@ -335,3 +335,13 @@ export async function getTopMemesAllTime(limit = 12): Promise<Meme[]> {
     return { caption, post, index: ordered.findIndex((c) => c.id === caption.id) + 1, total: ordered.length };
   });
 }
+
+/** Posts created since `iso` (newest first), hydrated. Used for the subway map's traffic. */
+export async function getPostsSince(iso: string, limit = 150): Promise<PostWithCaptions[]> {
+  const supabase = await createClient();
+  const { data, error } = await withPostSelect((sel) =>
+    supabase.from("posts").select(sel).gte("created_at", iso).order("created_at", { ascending: false }).limit(limit)
+  );
+  if (error) throw new Error(error.message);
+  return hydrate((data ?? []) as PostRow[]);
+}
