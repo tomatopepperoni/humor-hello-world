@@ -66,6 +66,30 @@ cp .env.example .env.local   # fill in the two Supabase values + GEMINI_API_KEY
 npm run dev
 ```
 
+## Week 7 – Admin panel with more observability
+
+The admin area (repo `humor-admin`) got pages for prompt chains, the chain mix, terms, generation examples,
+LLM models/providers, generation requests, LLM responses, AI media, signup domains, whitelisted e-mails and
+images. This app changed so those pages mean something:
+
+- **Prompts come from the database.** `lib/prompt-chain.ts` asks `public.generation_config(voice)` for the
+  voice's chain steps, up to 10 terms, up to 3 few-shot examples and the model list, and joins the steps into
+  the prompt. Steps with a condition (photo, theme, “write 3 more”…) are skipped when that input is missing.
+  If the function or the chain is missing it falls back to the old hard-coded prompt (`lib/prompt.ts`), which
+  the seeded chain reproduces word for word.
+- **Every run is logged.** `lib/gemini.ts` records each model call (status, latency, tokens incl. thinking,
+  finish reason, raw text, why the answer was rejected). `lib/generation-log.ts` writes the run and its calls
+  through `public.log_generation()`, failures included, and each caption stores `generation_request_id`.
+  The week-4 bug (captions like “[”) would now show up as an “Unusable output · MAX_TOKENS” call.
+- **The voice picker follows the mix.** Switched-off voices disappear (and the server refuses them);
+  “Surprise me” picks a voice using the admin's weights.
+- **Signup gate.** After Google sign-in, `public.signup_allowed()` checks the allowed domains and the
+  whitelist. Superadmins and people who already finished onboarding always pass; with nothing configured
+  everyone passes. Blocked sign-ins are signed out and told to use their Columbia/Barnard account.
+
+Setup: run `supabase/week7_observability.sql` in the Supabase SQL editor (after week 6's `week6_admin.sql`).
+Everything keeps working before it runs: the app falls back to the built-in prompt and skips logging.
+
 ## Week 5 – Get feedback and iterate
 
 **Setup:** run [`supabase/week5.sql`](supabase/week5.sql) once in the Supabase SQL

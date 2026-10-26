@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addCaptions, deletePost, type MoreState } from "@/app/actions/captions";
 import { VibeBullet } from "@/app/components/LineBullet";
-import { VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
+import { VIBES, type Vibe } from "@/lib/vibes";
 import ServiceAlert from "@/app/components/ServiceAlert";
 
 /** Owner-only: ask Gemini for 3 more captions (any vibe), or delete the post. */
@@ -13,15 +13,18 @@ export default function OwnerTools({
   currentVibe,
   captionCount,
   maxCaptions,
+  voices,
 }: {
   postId: string;
   currentVibe: Vibe;
+  /** Voices switched on in the admin area's prompt chain mix. */
+  voices: Vibe[];
   captionCount: number;
   maxCaptions: number;
 }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState<MoreState, FormData>(addCaptions, {});
-  const [vibe, setVibe] = useState<Vibe>(currentVibe);
+  const [vibe, setVibe] = useState<Vibe>(voices.includes(currentVibe) ? currentVibe : voices[0]);
   const [confirming, setConfirming] = useState(false);
   const full = captionCount >= maxCaptions;
 
@@ -45,7 +48,7 @@ export default function OwnerTools({
           <fieldset disabled={pending}>
             <legend className="text-sm text-muted">Get three more in any subway voice. They won&apos;t repeat the ones above.</legend>
             <div className="mt-3 flex flex-wrap gap-2">
-              {VIBE_KEYS.map((k) => (
+              {voices.map((k) => (
                 <label
                   key={k}
                   className={`flex cursor-pointer items-center rounded-full border py-1 pl-1 pr-3 text-sm transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-bullet-blue ${

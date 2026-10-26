@@ -8,7 +8,14 @@ import { isUsableCaption, tidyCaption } from "@/lib/caption-text";
  * Env:
  *   GEMINI_API_KEY   required (https://aistudio.google.com/apikey – free tier)
  *   GEMINI_MODEL     optional. One model, or a comma-separated list. Overrides
- *                    DEFAULT_MODELS below.
+ *                    DEFAULT_MODELS below when the database has no models set up.
+ *
+ * Since week 7 the model list normally comes from the llm_models table (see
+ * lib/prompt-chain.ts); these defaults are the fallback.
+ *
+ * Every call to a model is recorded as an `Attempt` (status, latency, tokens,
+ * finish reason, raw text, why it was rejected). The caller logs them to
+ * generation_requests / llm_responses so the admin area can show what happened.
  */
 
 // 2026-10-06 (free-tier key): 3.6-flash answered in ~3 s, 3.5-flash/lite in 1–3 s,
@@ -32,14 +39,52 @@ export const GEMINI_MODELS: string[] = (process.env.GEMINI_MODEL || DEFAULT_MODE
 /** First-choice model (used for display / docs). The actual model is returned per call. */
 export const GEMINI_MODEL = GEMINI_MODELS[0];
 
+/** One model to try, with its generation settings (from llm_models). */
+export type ModelSpec = { model: string; temperature?: number; maxOutputTokens?: number };
+
+const DEFAULT_TEMPERATURE = 1.0;
+// Thinking tokens count toward this limit. 1024 cut week-4 answers off
+// mid-JSON (captions like "[" in the feed), so leave plenty of room.
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+
 type Part =
   | { text: string }
   | { inline_data: { mime_type: string; data: string } };
 
 export type GeminiImage = { mimeType: string; base64: string };
 
+export type AttemptOutcome = "ok" | "unusable" | "http_error" | "blocked" | "empty" | "timeout" | "network";
+
+type Usage = {
+  prompt_tokens?: number;
+  output_tokens?: number;
+  thinking_tokens?: number;
+  total_tokens?: number;
+};
+
+/** One model call, as stored in llm_responses. */
+export type Attempt = Usage & {
+  attempt: number;
+  round: number;
+  model: string;
+  outcome: AttemptOutcome;
+  http_status?: number;
+  latency_ms: number;
+  finish_reason?: string;
+  raw_text?: string;
+  error?: string;
+  at: string;
+};
+
 export class GeminiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  /** Every model call made before giving up (filled in by generateText). */
+  attempts: Attempt[] = [];
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly outcome?: AttemptOutcome,
+    readonly info?: Usage & { finish_reason?: string; raw_text?: string }
+  ) {
     super(message);
   }
 }
@@ -50,12 +95,44 @@ const RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const ROUND_DELAYS_MS = [1500, 4000];
 /** Total time budget per request; the page sets maxDuration = 60. */
 const BUDGET_MS = 52_000;
+const RAW_TEXT_LIMIT = 8000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+type GeminiJson = {
+  candidates?: {
+    content?: { parts?: { text?: string; thought?: boolean }[] };
+    finishReason?: string;
+  }[];
+  promptFeedback?: { blockReason?: string };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    totalTokenCount?: number;
+  };
+};
+
+function usageOf(json: GeminiJson): Usage {
+  const u = json.usageMetadata;
+  if (!u) return {};
+  return {
+    prompt_tokens: u.promptTokenCount,
+    output_tokens: u.candidatesTokenCount,
+    thinking_tokens: u.thoughtsTokenCount,
+    total_tokens: u.totalTokenCount,
+  };
+}
+
 /** One generateContent call against one model. Throws GeminiError with the HTTP status. */
-async function callModel(model: string, key: string, parts: Part[], timeoutMs: number): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+async function callModel(
+  spec: ModelSpec,
+  key: string,
+  parts: Part[],
+  timeoutMs: number
+): Promise<{ text: string; finish_reason?: string } & Usage> {
+  const { model } = spec;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -65,10 +142,8 @@ async function callModel(model: string, key: string, parts: Part[], timeoutMs: n
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
       generationConfig: {
-        temperature: 1.0,
-        // Thinking tokens count toward this limit. 1024 cut week-4 answers off
-        // mid-JSON (captions like "[" in the feed), so leave plenty of room.
-        maxOutputTokens: 8192,
+        temperature: spec.temperature ?? DEFAULT_TEMPERATURE,
+        maxOutputTokens: spec.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         responseMimeType: "application/json",
       },
       safetySettings: [
@@ -79,7 +154,11 @@ async function callModel(model: string, key: string, parts: Part[], timeoutMs: n
     signal: AbortSignal.timeout(timeoutMs),
   }).catch((err: unknown) => {
     const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
-    throw new GeminiError(`${model} ${timedOut ? "timed out" : "could not be reached"}`, timedOut ? 504 : 503);
+    throw new GeminiError(
+      `${model} ${timedOut ? "timed out" : "could not be reached"}`,
+      timedOut ? 504 : 503,
+      timedOut ? "timeout" : "network"
+    );
   });
 
   if (!res.ok) {
@@ -90,38 +169,41 @@ async function callModel(model: string, key: string, parts: Part[], timeoutMs: n
     } catch {
       /* keep raw body */
     }
-    throw new GeminiError(`Gemini ${res.status} (${model}): ${msg.slice(0, 200) || res.statusText}`, res.status);
+    throw new GeminiError(
+      `Gemini ${res.status} (${model}): ${msg.slice(0, 200) || res.statusText}`,
+      res.status,
+      "http_error"
+    );
   }
 
-  const json = (await res.json()) as {
-    candidates?: {
-      content?: { parts?: { text?: string }[] };
-      finishReason?: string;
-    }[];
-    promptFeedback?: { blockReason?: string };
-  };
+  const json = (await res.json()) as GeminiJson;
+  const usage = usageOf(json);
+  const finish_reason = json.candidates?.[0]?.finishReason;
 
   if (json.promptFeedback?.blockReason) {
-    throw new GeminiError(`Prompt blocked (${json.promptFeedback.blockReason}).`, 400);
+    throw new GeminiError(`Prompt blocked (${json.promptFeedback.blockReason}).`, 400, "blocked", {
+      ...usage,
+      finish_reason: json.promptFeedback.blockReason,
+    });
   }
   const text = json.candidates?.[0]?.content?.parts
-    ?.filter((p) => !(p as { thought?: boolean }).thought)
+    ?.filter((p) => !p.thought)
     .map((p) => p.text ?? "")
     .join("")
     .trim();
   if (!text) {
-    throw new GeminiError(
-      `Gemini returned no text (finishReason: ${json.candidates?.[0]?.finishReason ?? "unknown"}).`,
-      502
-    );
+    throw new GeminiError(`Gemini returned no text (finishReason: ${finish_reason ?? "unknown"}).`, 502, "empty", {
+      ...usage,
+      finish_reason,
+    });
   }
-  return text;
+  return { text, finish_reason, ...usage };
 }
 
 /**
  * Sends one prompt (optionally with an image) and returns the model's answer,
- * run through `accept`, plus the model that actually answered. The prompt
- * string passed here is exactly what we persist in the DB.
+ * run through `accept`, plus the model that actually answered and every call
+ * that was made. The prompt string passed here is exactly what we persist.
  *
  * Resilience: "high demand" 503s are per model, so we go *across* the model
  * list first (one try each) and only then wait and do another pass, up to 3
@@ -133,8 +215,10 @@ async function callModel(model: string, key: string, parts: Part[], timeoutMs: n
 export async function generateText<T = string>(
   prompt: string,
   image?: GeminiImage,
-  accept: (text: string) => T = (t) => t as unknown as T
-): Promise<{ value: T; model: string }> {
+  accept: (text: string) => T = (t) => t as unknown as T,
+  modelList?: ModelSpec[]
+): Promise<{ value: T; model: string; attempts: Attempt[] }> {
+  const attempts: Attempt[] = [];
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     throw new GeminiError(
@@ -149,8 +233,8 @@ export async function generateText<T = string>(
   parts.push({ text: prompt });
 
   const deadline = Date.now() + BUDGET_MS;
-  let models = [...GEMINI_MODELS];
-  const attempts: string[] = [];
+  let models: ModelSpec[] =
+    modelList && modelList.length > 0 ? [...modelList] : GEMINI_MODELS.map((model) => ({ model }));
   let last: GeminiError | undefined;
 
   for (let round = 0; round <= ROUND_DELAYS_MS.length && models.length > 0; round++) {
@@ -159,18 +243,56 @@ export async function generateText<T = string>(
       if (Date.now() + wait + 3_000 > deadline) break;
       await sleep(wait);
     }
-    for (const model of [...models]) {
+    for (const spec of [...models]) {
       const left = deadline - Date.now();
       if (left < 3_000) break;
+      const startedAt = Date.now();
+      const base = { attempt: attempts.length + 1, round: round + 1, model: spec.model, at: new Date(startedAt).toISOString() };
+      let answered: Awaited<ReturnType<typeof callModel>> | undefined;
       try {
-        const text = await callModel(model, key, parts, Math.min(25_000, left));
-        return { value: accept(text), model };
+        answered = await callModel(spec, key, parts, Math.min(25_000, left));
+        const value = accept(answered.text);
+        const { text, ...meta } = answered;
+        attempts.push({
+          ...base,
+          ...meta,
+          outcome: "ok",
+          http_status: 200,
+          latency_ms: Date.now() - startedAt,
+          raw_text: text.slice(0, RAW_TEXT_LIMIT),
+        });
+        return { value, model: spec.model, attempts };
       } catch (err) {
         const e = err instanceof GeminiError ? err : new GeminiError(String(err));
-        attempts.push(`${model} ${e.status ?? "error"}`);
-        if (e.status === 401 || e.status === 403) throw e; // key problem: retrying won't help
+        if (answered) {
+          // The model answered but `accept` rejected the text (e.g. 2 usable captions).
+          const { text, ...meta } = answered;
+          attempts.push({
+            ...base,
+            ...meta,
+            outcome: "unusable",
+            http_status: 200,
+            latency_ms: Date.now() - startedAt,
+            raw_text: text.slice(0, RAW_TEXT_LIMIT),
+            error: e.message.slice(0, 500),
+          });
+          last = new GeminiError(e.message, 502, "unusable");
+          continue;
+        }
+        attempts.push({
+          ...base,
+          ...(e.info ?? {}),
+          outcome: e.outcome ?? "http_error",
+          http_status: e.status,
+          latency_ms: Date.now() - startedAt,
+          error: e.message.slice(0, 500),
+        });
+        if (e.status === 401 || e.status === 403) {
+          e.attempts = attempts;
+          throw e; // key problem: retrying won't help
+        }
         if (e.status === 404 || e.status === 400) {
-          models = models.filter((m) => m !== model);
+          models = models.filter((m) => m.model !== spec.model);
           if (e.status === 400) last = e;
           continue;
         }
@@ -182,19 +304,21 @@ export async function generateText<T = string>(
   // "gemini-3.6-flash 503 ×3, gemini-flash-latest 404" – one entry per model.
   const byModel = new Map<string, string[]>();
   for (const a of attempts) {
-    const [m, st] = a.split(" ");
-    byModel.set(m, [...(byModel.get(m) ?? []), st]);
+    const st = a.outcome === "unusable" ? "bad output" : String(a.http_status ?? a.outcome);
+    byModel.set(a.model, [...(byModel.get(a.model) ?? []), st]);
   }
   const tried = [...byModel]
     .map(([m, sts]) => (sts.every((x) => x === sts[0]) && sts.length > 1 ? `${m} ${sts[0]} ×${sts.length}` : `${m} ${sts.join("/")}`))
     .join(", ");
   const overloaded = last?.status !== undefined && RETRY_STATUSES.has(last.status);
-  throw new GeminiError(
+  const err = new GeminiError(
     overloaded
-      ? `Google's Gemini servers are overloaded right now, so no captions were written. Wait a minute and try again. (Tried: ${tried})`
-      : `${last?.message ?? "Gemini is unavailable."} (Tried: ${tried})`,
+      ? `Google's Gemini servers are overloaded right now, so no captions were written. Wait a minute and try again. (Tried: ${tried || "no models"})`
+      : `${last?.message ?? "Gemini is unavailable."} (Tried: ${tried || "no models"})`,
     last?.status ?? 503
   );
+  err.attempts = attempts;
+  throw err;
 }
 
 /**
@@ -244,7 +368,8 @@ export function parseCaptionList(raw: string, want = 3): string[] {
   if (list.length < want) {
     throw new GeminiError(
       `The model returned ${list.length} usable caption${list.length === 1 ? "" : "s"} instead of ${want}.`,
-      502
+      502,
+      "unusable"
     );
   }
   return list.slice(0, want);

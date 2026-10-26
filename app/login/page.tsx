@@ -15,6 +15,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
   const next = safeNext(params.next, "");
   const hadError = params.error === "auth";
+  const wrongDomain = params.error === "domain";
   const reason = WHY[next] ?? (next.startsWith("/p/") ? "Sign in to vote on this post." : null);
 
   return (
@@ -35,6 +36,13 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         {hadError && (
           <p role="alert" className="mt-4 rounded-lg bg-white/10 p-3 text-sm">
             Google sign-in didn&apos;t finish. Try again, and pick the same Google account if you have several.
+          </p>
+        )}
+
+        {wrongDomain && (
+          <p role="alert" className="mt-4 rounded-lg bg-white/10 p-3 text-sm">
+            Captioned NYC is for the Columbia community. Sign in with your Columbia or Barnard Google account, or ask
+            the site owner to add your address.
           </p>
         )}
 

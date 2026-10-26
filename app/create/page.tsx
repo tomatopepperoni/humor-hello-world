@@ -5,6 +5,7 @@ import { getCurrentProfile } from "@/lib/profile";
 import { todaysTheme } from "@/lib/vibes";
 import { DAILY_RUNS, runsLeftToday } from "@/lib/limits";
 import { createClient } from "@/lib/supabase/server";
+import { getVoiceMix } from "@/lib/voices";
 
 export const dynamic = "force-dynamic";
 // Server actions on this page call Gemini, which can take a while when it is busy.
@@ -15,6 +16,8 @@ export const metadata: Metadata = { title: "New post" };
 export default async function CreatePage() {
   const { user } = await getCurrentProfile();
   if (!user) redirect("/login?next=/create");
+  const supabase = await createClient();
+  const [runsLeft, mix] = await Promise.all([runsLeftToday(supabase, user.id), getVoiceMix(supabase)]);
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
@@ -26,8 +29,10 @@ export default async function CreatePage() {
         <CreateForm
           userId={user.id}
           theme={todaysTheme()}
-          runsLeft={await runsLeftToday(await createClient(), user.id)}
+          runsLeft={runsLeft}
           dailyRuns={DAILY_RUNS}
+          voices={mix.enabled}
+          weights={mix.weights}
         />
       </div>
     </main>

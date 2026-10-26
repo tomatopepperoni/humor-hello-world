@@ -33,6 +33,14 @@ export async function updateProfile(
     return { error: "First name and last name are both required." };
   }
 
+  // Week 7 signup gate (the callback already checks; this covers a session that
+  // skipped it). Existing members always pass, see public.signup_allowed().
+  const { data: allowed, error: gateError } = await supabase.rpc("signup_allowed");
+  if (!gateError && allowed === false) {
+    await supabase.auth.signOut();
+    redirect("/login?error=domain");
+  }
+
   // Upsert (not update): if the auth.users trigger didn't create a row for
   // this user, a plain update would silently affect 0 rows.
   const { data, error } = await supabase

@@ -5,6 +5,8 @@ import PostCard, { displayName } from "@/app/components/PostCard";
 import { ShareButton } from "@/app/components/CopyButton";
 import OwnerTools from "./OwnerTools";
 import { getCurrentProfile } from "@/lib/profile";
+import { createClient } from "@/lib/supabase/server";
+import { getVoiceMix } from "@/lib/voices";
 import { getPost } from "@/lib/posts";
 import { DEFAULT_VIBE, VIBE_KEYS, isVibe } from "@/lib/vibes";
 
@@ -94,6 +96,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
           currentVibe={isVibe(post.vibe) && VIBE_KEYS.includes(post.vibe) ? post.vibe : DEFAULT_VIBE}
           captionCount={post.captions.length}
           maxCaptions={MAX_CAPTIONS}
+          voices={(await getVoiceMix(await createClient())).enabled}
         />
       )}
 

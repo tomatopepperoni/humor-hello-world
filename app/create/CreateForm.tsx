@@ -6,7 +6,7 @@ import { generateCaptions, type GenerateState } from "@/app/actions/captions";
 import { VibeBullet } from "@/app/components/LineBullet";
 import { resizeImage } from "@/lib/resize-image";
 import ServiceAlert from "@/app/components/ServiceAlert";
-import { DEFAULT_VIBE, VIBES, VIBE_KEYS, type Vibe } from "@/lib/vibes";
+import { DEFAULT_VIBE, VIBES, type Vibe } from "@/lib/vibes";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -46,11 +46,17 @@ export default function CreateForm({
   theme,
   runsLeft,
   dailyRuns,
+  voices,
+  weights,
 }: {
   userId: string;
   theme: string;
   runsLeft: number;
   dailyRuns: number;
+  /** Voices switched on in the admin area's prompt chain mix. */
+  voices: Vibe[];
+  /** "Surprise me" weights from the same mix. */
+  weights: Partial<Record<Vibe, number>>;
 }) {
   const [state, formAction, submitting] = useActionState<GenerateState, FormData>(generateCaptions, {});
 
@@ -61,8 +67,21 @@ export default function CreateForm({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [imagePath, setImagePath] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-  const [vibe, setVibe] = useState<Vibe>(DEFAULT_VIBE);
+  const [vibe, setVibe] = useState<Vibe>(voices.includes(DEFAULT_VIBE) ? DEFAULT_VIBE : voices[0]);
+
   const [context, setContext] = useState("");
+
+  /** Weighted random voice, never the one already picked (weights: admin's prompt chain mix). */
+  function surpriseMe() {
+    const others = voices.filter((k) => k !== vibe);
+    const weighted = others.filter((k) => (weights[k] ?? 0) > 0);
+    const pool = weighted.length > 0 ? weighted : others;
+    if (pool.length === 0) return;
+    const w = (k: Vibe) => (weighted.length > 0 ? weights[k] ?? 0 : 1);
+    let r = Math.random() * pool.reduce((sum, k) => sum + w(k), 0);
+    const pick = pool.find((k) => (r -= w(k)) < 0) ?? pool[pool.length - 1];
+    setVibe(pick);
+  }
 
   async function upload(original: File) {
     setUploadError(null);
@@ -217,9 +236,20 @@ export default function CreateForm({
         {/* Vibe */}
         <fieldset>
           <legend className="text-[15px] font-semibold">Pick a subway voice</legend>
-          <p className="mt-0.5 text-sm text-muted">Each voice is a line. Same moment, different ride.</p>
+          <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted">Each voice is a line. Same moment, different ride.</p>
+            {voices.length > 1 && (
+              <button
+                type="button"
+                onClick={surpriseMe}
+                className="rounded-full border bg-card px-3 py-1 text-sm font-medium hover:border-ink/40"
+              >
+                Surprise me
+              </button>
+            )}
+          </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {VIBE_KEYS.map((k) => {
+            {voices.map((k) => {
               const on = vibe === k;
               return (
                 <label

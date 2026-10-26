@@ -1,11 +1,15 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { GeminiError, generateText, parseCaptionList } from "@/lib/gemini";
+import { GeminiError, generateText, parseCaptionList, type Attempt, type ModelSpec } from "@/lib/gemini";
 import { DEFAULT_VIBE, VIBES, isVibe, todaysTheme, type Vibe } from "@/lib/vibes";
 import { DAILY_RUNS, runsLeftToday } from "@/lib/limits";
+import { prepareGeneration } from "@/lib/prompt-chain";
+import { logGeneration } from "@/lib/generation-log";
+import { getVoiceMix } from "@/lib/voices";
 
 /** `busy`: Gemini was overloaded / rate-limited, so trying again shortly should work. */
 export type GenerateState = { error?: string; busy?: boolean; limit?: boolean };
@@ -17,47 +21,29 @@ const CAPTIONS_PER_ROUND = 3;
 const MAX_CAPTIONS_PER_POST = 9;
 const MAX_CONTEXT = 200;
 
-/** Builds the exact prompt we send to Gemini. Stored on every caption row. */
-function buildPrompt(opts: {
-  vibe: Vibe;
-  context: string | null;
-  hasImage: boolean;
-  theme: string | null;
-  avoid?: string[];
-}) {
-  const lines = [
-    "You write short, funny captions for Captioned NYC, where college students post moments from their week in New York and the captions speak in the voices of the city's subway.",
-    `Audience: a Columbia undergrad who is new to NYC, lives in the dorms, rides the 1 train, and is online all day.`,
-    // Keep this exact shape ("Vibe: <label>. …"): vibeFromPrompt() reads it back.
-    `Vibe: ${VIBES[opts.vibe].label}. ${VIBES[opts.vibe].instruction}`,
-  ];
-  if (opts.theme) lines.push(`Today's community theme: "${opts.theme}".`);
-  if (opts.hasImage) lines.push("Look carefully at the attached photo and reference specific things in it.");
-  if (opts.context) lines.push(`The poster says about this moment: "${opts.context}"`);
-  if (opts.avoid && opts.avoid.length > 0) {
-    lines.push(
-      "These captions already exist for this post. Do not repeat their jokes or wording:",
-      ...opts.avoid.map((t) => `- ${t}`)
-    );
-  }
-  lines.push(
-    `Write ${CAPTIONS_PER_ROUND} different captions. Each under 140 characters, no hashtags, no emojis, each with a different angle. Every caption must be funny on its own, even to someone who can't see the photo, and must mention a concrete detail of this moment.`,
-    `Respond with ONLY a JSON array of ${CAPTIONS_PER_ROUND} strings.`
-  );
-  return lines.join("\n");
-}
+type AskResult =
+  | { captions: string[]; model: string; attempts: Attempt[] }
+  | { error: string; busy: boolean; attempts: Attempt[] };
 
-async function askGemini(prompt: string, image?: { mimeType: string; base64: string }) {
+async function askGemini(
+  prompt: string,
+  image: { mimeType: string; base64: string } | undefined,
+  models?: ModelSpec[]
+): Promise<AskResult> {
   try {
-    const { value, model } = await generateText(prompt, image, (text) =>
-      parseCaptionList(text, CAPTIONS_PER_ROUND)
+    const { value, model, attempts } = await generateText(
+      prompt,
+      image,
+      (text) => parseCaptionList(text, CAPTIONS_PER_ROUND),
+      models
     );
-    return { captions: value, model };
+    return { captions: value, model, attempts };
   } catch (err) {
     const msg = err instanceof GeminiError ? err.message : "The caption model is unavailable right now.";
     const status = err instanceof GeminiError ? err.status : undefined;
+    const attempts: Attempt[] = err instanceof GeminiError ? err.attempts : [];
     const busy = status === undefined || [408, 429, 500, 502, 503, 504].includes(status);
-    return { error: msg, busy };
+    return { error: msg, busy, attempts };
   }
 }
 
@@ -71,29 +57,34 @@ type CaptionInsert = {
   model: string;
   position: number;
   vibe: Vibe;
+  generation_request_id?: string;
 };
 
+const OPTIONAL_COLUMNS = ["generation_request_id", "vibe"] as const;
+
 /**
- * Saves captions with their voice in captions.vibe. Before supabase/week5.sql
- * adds that column, PostgREST rejects it (PGRST204), so retry without it: the
- * voice can still be read back from the saved prompt.
+ * Saves captions with their voice (captions.vibe, week 5) and their run
+ * (captions.generation_request_id, week 7). If a migration hasn't been run yet,
+ * PostgREST rejects the unknown column (PGRST204 / 42703), so drop that key and
+ * try again: the captions themselves always get saved.
  */
 async function insertCaptions(supabase: SupabaseServer, rows: CaptionInsert[]) {
-  const { error } = await supabase.from("captions").insert(rows);
-  if (error && (error.code === "PGRST204" || error.code === "42703" || /vibe/.test(error.message))) {
+  let current: Record<string, unknown>[] = rows.map((r) => ({ ...r }));
+  for (;;) {
+    const { error } = await supabase.from("captions").insert(current);
+    if (!error) return null;
+    const present = OPTIONAL_COLUMNS.filter((c) => current.some((r) => c in r));
+    const named = present.find((c) => error.message.includes(c));
+    const unknownColumn = error.code === "PGRST204" || error.code === "42703";
+    const drop = named ?? (unknownColumn ? present[0] : undefined);
+    if (!drop) return error;
     // Drop the key entirely: supabase-js lists every key it sees as a column.
-    const legacy = rows.map(({ post_id, user_id, text, prompt, model, position }) => ({
-      post_id,
-      user_id,
-      text,
-      prompt,
-      model,
-      position,
-    }));
-    const { error: retry } = await supabase.from("captions").insert(legacy);
-    return retry;
+    current = current.map((row) => {
+      const copy = { ...row };
+      delete copy[drop];
+      return copy;
+    });
   }
-  return error;
 }
 
 async function downloadImage(supabase: SupabaseServer, path: string) {
@@ -107,6 +98,11 @@ async function downloadImage(supabase: SupabaseServer, path: string) {
  * Server action: create a post, call Gemini, save the captions.
  * Flow: the browser has already uploaded the image to the "photos" bucket
  * (RLS: own folder only) and hands us its storage path + public URL.
+ *
+ * Week 7: the prompt + model list come from the database (prompt chains,
+ * terms, examples, llm_models), and the run is logged (generation_requests +
+ * one llm_responses row per model call) before the captions are saved, so
+ * each caption can point at the run that wrote it.
  */
 export async function generateCaptions(
   _prev: GenerateState,
@@ -133,6 +129,10 @@ export async function generateCaptions(
   if (imagePath && !imagePath.startsWith(`${user.id}/`)) {
     return { error: "That photo upload can't be used. Upload it again." };
   }
+  const mix = await getVoiceMix(supabase);
+  if (!mix.enabled.includes(vibe)) {
+    return { error: `The ${VIBES[vibe].label} voice is switched off right now. Pick another one.` };
+  }
 
   if ((await runsLeftToday(supabase, user.id)) <= 0) return { error: limitMessage(), limit: true };
 
@@ -144,15 +144,49 @@ export async function generateCaptions(
     image = dl.image;
   }
 
-  // 2. Ask Gemini (retries + model fallback + output validation live in lib/gemini).
-  const prompt = buildPrompt({ vibe, context, hasImage: !!image, theme });
-  const ai = await askGemini(prompt, image);
+  // 2. Build the prompt from the voice's chain and ask Gemini
+  //    (retries + model fallback + output validation live in lib/gemini).
+  const startedAt = new Date();
+  const gen = await prepareGeneration(supabase, {
+    vibe,
+    count: CAPTIONS_PER_ROUND,
+    context,
+    hasImage: !!image,
+    theme,
+    avoid: [],
+  });
+  const prompt = gen.prompt;
+  const ai = await askGemini(prompt, image, gen.models);
+
+  // 3. Log the run (success or not). Ids are made here so the log, the post
+  //    and the captions can point at each other without extra round trips.
+  const requestId = randomUUID();
+  const postId = randomUUID();
+  const logged = await logGeneration(
+    supabase,
+    {
+      id: requestId,
+      kind: "create",
+      app: "caption-app",
+      vibe,
+      postId: "error" in ai ? null : postId,
+      status: "error" in ai ? "failed" : "success",
+      prompt,
+      hasImage: !!image,
+      model: "error" in ai ? null : ai.model,
+      captionCount: "error" in ai ? 0 : ai.captions.length,
+      error: "error" in ai ? ai.error : null,
+      startedAt,
+      configSource: gen.configSource,
+    },
+    ai.attempts
+  );
   if ("error" in ai) return { error: ai.error, busy: ai.busy };
 
-  // 3. Save post + captions (RLS: user_id must equal auth.uid()).
+  // 4. Save post + captions (RLS: user_id must equal auth.uid()).
   const { data: post, error: postErr } = await supabase
     .from("posts")
-    .insert({ user_id: user.id, image_url: imageUrl, image_path: imagePath, context, vibe, theme })
+    .insert({ id: postId, user_id: user.id, image_url: imageUrl, image_path: imagePath, context, vibe, theme })
     .select("id")
     .single();
   if (postErr || !post) return { error: postErr?.message ?? "Could not save the post." };
@@ -167,6 +201,7 @@ export async function generateCaptions(
       model: ai.model,
       position,
       vibe,
+      ...(logged ? { generation_request_id: requestId } : {}),
     }))
   );
   if (capErr) {
@@ -209,6 +244,10 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
   if (existing.length >= MAX_CAPTIONS_PER_POST) {
     return { error: `A post can have up to ${MAX_CAPTIONS_PER_POST} captions. Delete it and post again for a fresh set.` };
   }
+  const mix = await getVoiceMix(supabase);
+  if (!mix.enabled.includes(vibe)) {
+    return { error: `The ${VIBES[vibe].label} voice is switched off right now. Pick another one.` };
+  }
 
   if ((await runsLeftToday(supabase, user.id)) <= 0) return { error: limitMessage(), limit: true };
 
@@ -219,17 +258,41 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
     image = dl.image;
   }
 
-  const prompt = buildPrompt({
+  const startedAt = new Date();
+  const gen = await prepareGeneration(supabase, {
     vibe,
+    count: CAPTIONS_PER_ROUND,
     context: post.context,
     hasImage: !!image,
     theme: post.theme,
     avoid: existing.map((c) => c.text),
   });
-  const ai = await askGemini(prompt, image);
+  const prompt = gen.prompt;
+  const ai = await askGemini(prompt, image, gen.models);
+
+  const requestId = randomUUID();
+  const room = MAX_CAPTIONS_PER_POST - existing.length;
+  const logged = await logGeneration(
+    supabase,
+    {
+      id: requestId,
+      kind: "more",
+      app: "caption-app",
+      vibe,
+      postId: post.id,
+      status: "error" in ai ? "failed" : "success",
+      prompt,
+      hasImage: !!image,
+      model: "error" in ai ? null : ai.model,
+      captionCount: "error" in ai ? 0 : Math.min(room, ai.captions.length),
+      error: "error" in ai ? ai.error : null,
+      startedAt,
+      configSource: gen.configSource,
+    },
+    ai.attempts
+  );
   if ("error" in ai) return { error: ai.error, busy: ai.busy };
 
-  const room = MAX_CAPTIONS_PER_POST - existing.length;
   const start = existing.reduce((max, c) => Math.max(max, c.position), -1) + 1;
   const rows = ai.captions.slice(0, room).map((text, i) => ({
     post_id: post.id,
@@ -239,6 +302,7 @@ export async function addCaptions(_prev: MoreState, formData: FormData): Promise
     model: ai.model,
     position: start + i,
     vibe,
+    ...(logged ? { generation_request_id: requestId } : {}),
   }));
   const error = await insertCaptions(supabase, rows);
   if (error) return { error: error.message };
