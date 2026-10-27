@@ -32,8 +32,8 @@ export default function MobileTabBar({ loggedIn }: { loggedIn: boolean }) {
     { href: "/", label: "Feed", icon: "feed" },
     { href: "/race", label: "Race", icon: "race" },
     { href: loggedIn ? "/create" : "/login?next=/create", label: "Post", icon: "post" },
-    { href: "/top", label: "Top", icon: "top" },
-    { href: loggedIn ? "/profile" : "/login?next=/profile", label: loggedIn ? "You" : "Sign in", icon: "you" },
+    { href: "/top", label: "Leaderboard", icon: "top" },
+    { href: loggedIn ? "/profile" : "/login?next=/profile", label: loggedIn ? "Profile" : "Sign in", icon: "you" },
   ];
 
   return (

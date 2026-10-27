@@ -93,7 +93,9 @@ async function hydrate(posts: PostRow[]): Promise<PostWithCaptions[]> {
           .in("caption_id", captionIds)
       : Promise.resolve({ data: [] as { caption_id: string; upvotes: number; downvotes: number; score: number }[] }),
     user && captionIds.length
-      ? supabase.from("votes").select("caption_id, value").in("caption_id", captionIds)
+      ? // Filter by user explicitly: superadmins can read every vote (week 6 RLS),
+      // and without this their "my vote" came from someone else's row.
+      supabase.from("votes").select("caption_id, value").eq("user_id", user.id).in("caption_id", captionIds)
       : Promise.resolve({ data: [] as { caption_id: string; value: number }[] }),
     supabase.from("public_profiles").select("id, first_name, avatar_url").in("id", authorIds),
   ]);
@@ -344,4 +346,38 @@ export async function getPostsSince(iso: string, limit = 150): Promise<PostWithC
   );
   if (error) throw new Error(error.message);
   return hydrate((data ?? []) as PostRow[]);
+}
+
+export type VotedMeme = Meme & { voted_at: string };
+
+/** The captions this user voted on, most recent vote first (profile → "Votes"). */
+export async function getMyVotedMemes(userId: string, limit = 30): Promise<VotedMeme[]> {
+  const supabase = await createClient();
+  const { data: votes, error } = await supabase
+    .from("votes")
+    .select("caption_id, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  const ids = (votes ?? []).map((v) => v.caption_id as string);
+  if (ids.length === 0) return [];
+
+  const { data: caps, error: capErr } = await supabase.from("captions").select("post_id").in("id", ids);
+  if (capErr) throw new Error(capErr.message);
+  const postIds = Array.from(new Set((caps ?? []).map((c) => c.post_id as string)));
+  if (postIds.length === 0) return [];
+
+  const { data: posts, error: postErr } = await withPostSelect((sel) => supabase.from("posts").select(sel).in("id", postIds));
+  if (postErr) throw new Error(postErr.message);
+  const hydrated = await hydrate((posts ?? []) as PostRow[]);
+
+  const byCaption = new Map<string, Meme>();
+  for (const p of hydrated) for (const m of toMemes(p)) byCaption.set(m.caption.id, m);
+  return (votes ?? [])
+    .map((v) => {
+      const m = byCaption.get(v.caption_id as string);
+      return m ? { ...m, voted_at: v.created_at as string } : null;
+    })
+    .filter((x): x is VotedMeme => !!x && x.caption.my_vote !== 0);
 }

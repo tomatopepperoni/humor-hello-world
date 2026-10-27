@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { signOut } from "@/app/actions/profile";
 import { getCurrentProfile } from "@/lib/profile";
 import NavLink from "@/app/components/NavLink";
 import HeaderShell from "@/app/components/HeaderShell";
@@ -35,7 +34,7 @@ export default async function Header() {
             <div className="hidden items-center gap-1 md:flex">
               <NavLink href="/">Feed</NavLink>
               <NavLink href="/race">Race to Columbia</NavLink>
-              <NavLink href="/top">Top</NavLink>
+              <NavLink href="/top">Leaderboard</NavLink>
             </div>
             {user ? (
               <>
@@ -53,11 +52,6 @@ export default async function Header() {
                   <Avatar name={name} url={profile?.avatar_url ?? null} size={30} onDark />
                   <span className="hidden max-w-28 truncate text-sm font-medium lg:inline">{name}</span>
                 </Link>
-                <form action={signOut} className="hidden md:block">
-                  <button className="rounded-full px-3 py-1.5 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white">
-                    Sign out
-                  </button>
-                </form>
               </>
             ) : (
               <Link

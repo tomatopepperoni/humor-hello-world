@@ -46,7 +46,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                 Leaderboard
               </Link>
               <Link href="/profile" className="hover:text-ink">
-                Your posts
+                Profile
+              </Link>
+              <Link href="/settings" className="hover:text-ink">
+                Settings
               </Link>
             </nav>
           </div>

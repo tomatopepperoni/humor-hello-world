@@ -72,12 +72,17 @@ export function riderStatus(r: Rider) {
   return `${STATIONS[r.station]}, ${left} ${left === 1 ? "stop" : "stops"} to go`;
 }
 
-/** Compact standings for the home sidebar. */
+/**
+ * Home sidebar: one rule and one progress bar. Standings, the map and the full
+ * scoring rules are one click away on /race (week 5 feedback: too many concepts
+ * on the home page at once).
+ */
 export function RaceMini({ riders, meId }: { riders: Rider[]; meId: string | null }) {
   const active = riders.filter((r) => r.points_week > 0);
-  const top = active.slice(0, 5);
+  const leader = active[0];
   const me = riders.find((r) => r.user_id === meId);
   const myRank = me ? active.findIndex((r) => r.user_id === meId) + 1 : 0;
+  const stops = Math.min(me?.points_week ?? 0, STOPS_TO_COLUMBIA);
 
   return (
     <section aria-labelledby="race-mini" className="rounded-xl border bg-card p-4">
@@ -86,40 +91,33 @@ export function RaceMini({ riders, meId }: { riders: Rider[]; meId: string | nul
           Race to Columbia
         </h2>
         <Link href="/race" className="text-sm font-medium text-bullet-blue hover:underline">
-          Open map
+          View details
         </Link>
       </div>
-      <p className="mt-0.5 text-sm text-muted">This week on the 1 train. Votes and posts move you uptown.</p>
-      {top.length === 0 ? (
-        <p className="mt-3 text-sm">Nobody has left South Ferry yet. Vote on a caption to board.</p>
-      ) : (
-        <ol className="mt-3 space-y-3">
-          {top.map((r, i) => (
-            <li key={r.user_id} className="flex items-center gap-2.5">
-              <span className="w-4 text-right text-sm font-bold tabular-nums">{i + 1}</span>
-              <RiderDot r={r} me={r.user_id === meId} size={24} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2 text-sm">
-                  <span className="truncate font-semibold">{displayName(r.first_name)}</span>
-                  <span className="shrink-0 tabular-nums text-muted">
-                    {Math.min(r.points_week, STOPS_TO_COLUMBIA)}/{STOPS_TO_COLUMBIA}
-                  </span>
-                </span>
-                <span className="mt-1.5 block">
-                  <ProgressLine station={r.station} />
-                </span>
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
-      {me && myRank > 5 && (
-        <p className="mt-3 border-t pt-3 text-sm">
-          You&apos;re {ordinal(myRank)}, at {STATIONS[me.station]}.
+      <p className="mt-0.5 text-sm text-muted">Every vote moves you one stop up the 1 train. First to Columbia wins the week.</p>
+
+      {me ? (
+        <div className="mt-3">
+          <div className="mb-2 flex items-baseline justify-between gap-2 text-sm">
+            <span className="font-semibold">{stops === 0 ? "You're at South Ferry" : riderStatus(me)}</span>
+            <span className="shrink-0 tabular-nums text-muted">
+              {stops}/{STOPS_TO_COLUMBIA}
+            </span>
+          </div>
+          <ProgressLine station={me.station} />
+          {myRank > 0 && (
+            <p className="mt-2 text-xs text-muted">{myRank === 1 ? "You're leading this week." : `${ordinal(myRank)} place this week.`}</p>
+          )}
+        </div>
+      ) : leader ? (
+        <p className="mt-3 flex items-center gap-2 text-sm">
+          <RiderDot r={leader} me={false} size={22} />
+          <span>
+            <span className="font-semibold">{displayName(leader.first_name)}</span> leads, at {STATIONS[leader.station]}.
+          </span>
         </p>
-      )}
-      {me && me.points_week === 0 && (
-        <p className="mt-3 border-t pt-3 text-sm">You haven&apos;t boarded this week. Each vote is one stop.</p>
+      ) : (
+        <p className="mt-3 text-sm">Nobody has left South Ferry yet.</p>
       )}
     </section>
   );

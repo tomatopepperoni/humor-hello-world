@@ -1,26 +1,15 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  AREA_LABELS,
-  BROOKLYN_QUEENS,
-  CENTRAL_PARK,
-  LINES,
-  MANHATTAN,
-  NEW_JERSEY,
-  ONE_STATION_U,
-  SHORT_NAMES,
-  TRANSFERS,
-  at,
-  evenStops,
-  oneStationDistances,
-  poly,
-  type MapLine,
-  type Pt,
-} from "@/lib/subway-map";
+import { useEffect, useMemo, useRef } from "react";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
-import { VIBES, type Vibe } from "@/lib/vibes";
+
+/**
+ * Race map, take two. The old one drew all of Manhattan with six lines and
+ * dozens of trains; feedback was that it was too much. This one is just the 1
+ * train as a toy track that snakes uptown, a handful of landmark stops, the
+ * other riders as little avatar pins, and one cute train (you) that rides from
+ * South Ferry to your stop, waits there, and does it again.
+ */
 
 export type MapRider = {
   id: string;
@@ -31,819 +20,409 @@ export type MapRider = {
   me: boolean;
 };
 
-export type MapMeme = { id: string; postId: string; text: string; author: string; score: number };
-
-type Traffic = Partial<Record<Vibe, MapMeme[]>>;
-
-/** Every 2 memes written in a voice put another train on its line (1 minimum, 5 maximum). */
-const trainsFor = (memes: number) => Math.max(1, Math.min(5, Math.ceil(memes / 2)));
-
-const LANDMARKS = new Set([0, 8, 13, 15, 20, 23]);
-
-type Proj = {
-  w: number;
-  h: number;
-  portrait: boolean;
-  p: (pt: Pt) => [number, number];
-  /** screen angle (degrees) for a heading in map units */
-  angle: (a: number) => number;
+const LANDMARKS: Record<number, { label: string; icon: string }> = {
+  0: { label: "South Ferry", icon: "⛴️" },
+  8: { label: "14 St", icon: "🍕" },
+  13: { label: "Times Sq", icon: "🎭" },
+  15: { label: "Columbus Cir", icon: "🌳" },
+  20: { label: "96 St", icon: "🥯" },
+  [STOPS_TO_COLUMBIA]: { label: "Columbia", icon: "🎓" },
 };
 
-const LANDSCAPE: Proj = {
-  w: 1000,
-  h: 590,
-  portrait: false,
-  p: ([u, v]) => [u, v],
-  angle: (a) => (a * 180) / Math.PI,
-};
-const PORTRAIT: Proj = {
-  w: 420,
-  h: 1000,
-  portrait: true,
-  p: ([u, v]) => [v - 110, 1000 - u],
-  angle: (a) => (Math.atan2(-Math.cos(a), Math.sin(a)) * 180) / Math.PI,
-};
+type Layout = { key: string; w: number; h: number; rows: number; x0: number; x1: number; yBottom: number; r: number };
 
-const pathD = (pts: readonly Pt[], pr: Proj) =>
-  pts.map((pt, i) => `${i ? "L" : "M"}${pr.p(pt)[0].toFixed(1)},${pr.p(pt)[1].toFixed(1)}`).join(" ");
+// Wide screens: three rows. Phones: five shorter rows, so labels stay readable.
+const WIDE: Layout = { key: "wide", w: 960, h: 430, rows: 3, x0: 96, x1: 864, yBottom: 338, r: 62 };
+const TALL: Layout = { key: "tall", w: 400, h: 610, rows: 5, x0: 68, x1: 332, yBottom: 508, r: 50 };
 
-/* ---------------- trains (animated outside React for smoothness) ---------------- */
+type P = { x: number; y: number; dx: number; dy: number; onArc: boolean };
 
-type Train = {
-  key: string;
-  line: MapLine;
-  lineIdx: number;
-  stops: number[];
-  stopIdx: number;
-  dir: 1 | -1;
-  phase: "dwell" | "move" | "docked";
-  t: number;
-  dur: number;
-  from: number;
-  to: number;
-  s: number;
-  rider?: MapRider;
-  /** landscape: which callout row above the river (0 = nearest) */
-  lane?: number;
-  /** index among riders who finish at the same stop */
-  stack?: number;
-  memes: MapMeme[];
-};
+/** The track is straight rows joined by half circles; positions are worked out exactly, no DOM measuring. */
+function geometry(L: Layout) {
+  const len = L.x1 - L.x0;
+  const arc = Math.PI * L.r;
+  const total = L.rows * len + (L.rows - 1) * arc;
 
-const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  const at = (sIn: number): P => {
+    let s = Math.max(0, Math.min(sIn, total));
+    for (let i = 0; i < L.rows; i++) {
+      const y = L.yBottom - i * 2 * L.r;
+      const right = i % 2 === 0;
+      if (s <= len || i === L.rows - 1) {
+        const d = Math.min(s, len);
+        return { x: right ? L.x0 + d : L.x1 - d, y, dx: right ? 1 : -1, dy: 0, onArc: false };
+      }
+      s -= len;
+      if (s <= arc) {
+        const th = s / L.r;
+        const side = right ? 1 : -1;
+        const cx = right ? L.x1 : L.x0;
+        return {
+          x: cx + side * L.r * Math.sin(th),
+          y: y - L.r + L.r * Math.cos(th),
+          dx: side * Math.cos(th),
+          dy: -Math.sin(th),
+          // only the middle of a bend counts: there the label goes inside the curve
+          onArc: th > 0.9 && th < Math.PI - 0.9,
+        };
+      }
+      s -= arc;
+    }
+    return { x: L.x1, y: L.yBottom, dx: 1, dy: 0, onArc: false };
+  };
 
-function initials(name: string) {
-  return (name.trim()[0] ?? "?").toUpperCase();
+  let d = `M ${L.x0} ${L.yBottom}`;
+  for (let i = 0; i < L.rows; i++) {
+    const y = L.yBottom - i * 2 * L.r;
+    const right = i % 2 === 0;
+    const xEnd = right ? L.x1 : L.x0;
+    d += ` H ${xEnd}`;
+    if (i < L.rows - 1) d += ` A ${L.r} ${L.r} 0 0 ${right ? 0 : 1} ${xEnd} ${y - 2 * L.r}`;
+  }
+
+  const stationS = STATIONS.map((_, k) => (k / STOPS_TO_COLUMBIA) * total);
+  return { total, at, d, stationS };
 }
 
-/* ---------------- arrivals board ---------------- */
+const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
-type BoardRow = { bullet: { letter: string; bg: string; fg: string }; left: string; right: string };
-
-function ArrivalsBoard({ rows }: { rows: BoardRow[] }) {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    if (rows.length <= 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const t = window.setInterval(() => setI((x) => (x + 1) % rows.length), 3600);
-    return () => window.clearInterval(t);
-  }, [rows.length]);
-  const shown = rows.length <= 2 ? rows : [rows[i % rows.length], rows[(i + 1) % rows.length]];
-
+function initials(name: string) {
   return (
-    <div className="rounded-xl bg-sign p-3 sm:p-4" aria-label="Arrivals board" role="status" aria-live="off">
-      <div className="space-y-2">
-        {shown.map((r, k) => (
-          <div key={`${i}-${k}`} className="led-row flex items-center gap-3 overflow-hidden" style={{ animationDelay: `${k * 90}ms` }}>
-            <span
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-bold"
-              style={{ background: r.bullet.bg, color: r.bullet.fg }}
-            >
-              {r.bullet.letter}
-            </span>
-            <span className="led min-w-0 flex-1 truncate">{r.left}</span>
-            <span className="led shrink-0 text-right">{r.right}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    name
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "?"
   );
 }
 
-/* ---------------- the map ---------------- */
+/** Rounded, smiling 1 train, drawn facing right with its centre on the track. */
+function Train() {
+  return (
+    <g className="cm-bob">
+      <rect x={-30} y={-27} width={10} height={5} rx={2} fill="#fccc0a" stroke="#16181a" strokeWidth={1.5} />
+      <rect x={-34} y={-23} width={66} height={30} rx={13} fill="#ee352e" stroke="#16181a" strokeWidth={2.5} />
+      <rect x={-27} y={-17} width={13} height={11} rx={3.5} fill="#dff3ff" stroke="#16181a" strokeWidth={1.6} />
+      <rect x={-10} y={-17} width={13} height={11} rx={3.5} fill="#dff3ff" stroke="#16181a" strokeWidth={1.6} />
+      {/* face */}
+      <circle cx={13} cy={-11} r={2.4} fill="#16181a" />
+      <circle cx={22} cy={-11} r={2.4} fill="#16181a" />
+      <circle cx={13.8} cy={-11.8} r={0.8} fill="#fff" />
+      <circle cx={22.8} cy={-11.8} r={0.8} fill="#fff" />
+      <path d="M 14 -5 Q 17.5 -1.5 21 -5" fill="none" stroke="#16181a" strokeWidth={1.8} strokeLinecap="round" />
+      <circle cx={10} cy={-5} r={2.3} fill="#ff9aa2" />
+      <circle cx={25} cy={-5} r={2.3} fill="#ff9aa2" />
+      <circle cx={-21} cy={2} r={4.2} fill="#fff" stroke="#16181a" strokeWidth={1.2} />
+      <text x={-21} y={3.9} textAnchor="middle" fontSize={6.5} fontWeight={800} fill="#ee352e">
+        1
+      </text>
+      {[-20, 18].map((x) => (
+        <g key={x} transform={`translate(${x} 9)`}>
+          <g className="cm-wheel">
+            <circle r={5.2} fill="#16181a" />
+            <path d="M -3.4 0 H 3.4 M 0 -3.4 V 3.4" stroke="#fff" strokeWidth={1.2} strokeLinecap="round" />
+          </g>
+        </g>
+      ))}
+    </g>
+  );
+}
 
-export default function SubwayMap({ riders, traffic }: { riders: MapRider[]; traffic: Traffic }) {
-  const [portrait, setPortrait] = useState<boolean | null>(null);
-  // A line lights up while you hover/focus its legend button, and stays lit once clicked.
-  const [hover, setHover] = useState<number | null>(null);
-  const [pinned, setPinned] = useState<number | null>(null);
-  const focus = hover ?? pinned;
-  const [popup, setPopup] = useState<{ x: number; y: number; w: number; line: MapLine; meme: MapMeme | null } | null>(null);
-  const pick = useRef(0);
-  const [replayKey, setReplayKey] = useState(0);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const trainEls = useRef(new Map<string, SVGGElement>());
-  const rippleEls = useRef<SVGCircleElement[]>([]);
-  const avatarEls = useRef(new Map<string, SVGGElement>());
+function Pin({ r, layoutKey }: { r: MapRider; layoutKey: string }) {
+  const clip = `cm-${layoutKey}-${r.id}`;
+  return (
+    <g>
+      <title>{`${r.name}: ${r.points} ${r.points === 1 ? "stop" : "stops"}`}</title>
+      <path d="M -5 9 L 0 16 L 5 9 Z" fill="#fff" stroke="#16181a" strokeWidth={1.5} strokeLinejoin="round" />
+      <circle r={13} fill="#fff" stroke="#16181a" strokeWidth={1.8} />
+      {r.avatarUrl ? (
+        <>
+          <clipPath id={clip}>
+            <circle r={10.5} />
+          </clipPath>
+          <image href={r.avatarUrl} x={-10.5} y={-10.5} width={21} height={21} clipPath={`url(#${clip})`} preserveAspectRatio="xMidYMid slice" />
+        </>
+      ) : (
+        <>
+          <circle r={10.5} fill="#e9e3ff" />
+          <text y={3.6} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#16181a">
+            {initials(r.name)}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
 
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 639px)");
-    const update = () => setPortrait(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
+function Tree({ x, y, s = 1 }: { x: number; y: number; s?: number }) {
+  return (
+    <g transform={`translate(${x} ${y}) scale(${s})`}>
+      <rect x={-1.5} y={2} width={3} height={7} rx={1} fill="#8a5a33" />
+      <circle r={7} fill="#5cc474" />
+      <circle cx={-2.5} cy={-2} r={2.2} fill="#8ee0a0" />
+    </g>
+  );
+}
 
-  const pr = portrait ? PORTRAIT : LANDSCAPE;
-  const polys = useMemo(() => LINES.map((l) => poly(l.path)), []);
-  const oneStops = useMemo(() => oneStationDistances(polys[0]), [polys]);
-  const active = useMemo(() => riders.filter((r) => r.points > 0), [riders]);
+function Cloud({ x, y, s = 1, delay = 0 }: { x: number; y: number; s?: number; delay?: number }) {
+  return (
+    <g transform={`translate(${x} ${y}) scale(${s})`}>
+      <g className="cm-cloud" style={{ animationDelay: `${delay}s` }}>
+        <ellipse cx={0} cy={0} rx={22} ry={11} fill="#fff" />
+        <ellipse cx={-12} cy={2} rx={13} ry={9} fill="#fff" />
+        <ellipse cx={13} cy={3} rx={12} ry={8} fill="#fff" />
+        <ellipse cx={2} cy={-7} rx={12} ry={9} fill="#fff" />
+      </g>
+    </g>
+  );
+}
+
+function MapSvg({ L, riders, className }: { L: Layout; riders: MapRider[]; className: string }) {
+  const g = useMemo(() => geometry(L), [L]);
+  const trainRef = useRef<SVGGElement>(null);
+  const bubbleRef = useRef<SVGGElement>(null);
+  const bubbleText = useRef<SVGTextElement>(null);
+  const bubbleBox = useRef<SVGRectElement>(null);
+
   const me = riders.find((r) => r.me);
+  const target = me ? me.station : STOPS_TO_COLUMBIA;
+  const message = me
+    ? me.station === 0
+      ? "Vote to leave the station!"
+      : me.station >= STOPS_TO_COLUMBIA
+        ? "You made it to Columbia!"
+        : `You're at ${STATIONS[me.station]}!`
+    : "Next stop: Columbia!";
 
-  // Build the train roster: meme trains per line + one train per rider on the 1.
-  const trains = useMemo<Train[]>(() => {
-    const list: Train[] = [];
-    LINES.forEach((line, li) => {
-      const stops = li === 0 ? oneStops : evenStops(polys[li]);
-      const memes = traffic[line.vibe] ?? [];
-      const n = trainsFor(memes.length);
-      for (let k = 0; k < n; k++) {
-        const stopIdx = Math.round(((k + 0.5) / n) * (stops.length - 1));
-        list.push({
-          key: `${line.letter}-${k}`,
-          line,
-          lineIdx: li,
-          stops,
-          stopIdx,
-          dir: k % 2 ? -1 : 1,
-          phase: "dwell",
-          t: 0,
-          dur: 0.4 + (k % 3) * 0.5,
-          from: stops[stopIdx],
-          to: stops[stopIdx],
-          s: stops[stopIdx],
-          memes: memes.filter((_, m) => m % n === k),
-        });
-      }
+  // Other riders as pins (top 8 by stops), grouped per station so they sit side by side.
+  const pins = useMemo(() => {
+    const others = riders.filter((r) => !r.me && r.points > 0).sort((a, b) => b.points - a.points).slice(0, 8);
+    const byStation = new Map<number, MapRider[]>();
+    for (const r of others) byStation.set(r.station, [...(byStation.get(r.station) ?? []), r]);
+    const out: { r: MapRider; x: number; y: number }[] = [];
+    byStation.forEach((list, k) => {
+      const p = g.at(g.stationS[k]);
+      // On a bend, pins go inside the curve so they never fall off the edge.
+      const inward = p.onArc ? (p.x > L.w / 2 ? -1 : 1) : 0;
+      list.forEach((r, j) => {
+        const off = (j - (list.length - 1) / 2) * 24;
+        out.push(inward ? { r, x: p.x + inward * 34, y: p.y + off } : { r, x: p.x + off, y: p.y - 32 });
+      });
     });
-    // Callout rows: greedy, so name tags of riders at nearby stops never overlap.
-    const lanes: number[][] = [[], [], []];
-    const laneOf = new Map<string, number>();
-    [...active]
-      .sort((a, b) => a.station - b.station || Number(b.me) - Number(a.me))
-      .forEach((r, i) => {
-        const u = ONE_STATION_U[r.station];
-        const free = lanes.findIndex((row) => row.every((x) => Math.abs(x - u) >= 125));
-        const lane = free === -1 ? i % lanes.length : free;
-        lanes[lane].push(u);
-        laneOf.set(r.id, lane);
-      });
-    const byStop = new Map<number, number>();
-    [...active]
-      .sort((a, b) => Number(b.me) - Number(a.me) || b.points - a.points)
-      .forEach((r, idx) => {
-        const stack = byStop.get(r.station) ?? 0;
-        byStop.set(r.station, stack + 1);
-        list.push({
-          key: `rider-${r.id}`,
-          line: LINES[0],
-          lineIdx: 0,
-          stops: oneStops,
-          stopIdx: 0,
-          dir: 1,
-          phase: r.station === 0 ? "docked" : "dwell",
-          t: 0,
-          dur: 0.6 + idx * 0.45, // staggered departures from South Ferry
-          from: 0,
-          to: 0,
-          s: 0,
-          rider: r,
-          lane: laneOf.get(r.id) ?? 0,
-          stack,
-          memes: [],
-        });
-      });
-    return list;
-    // replayKey resets every train to its starting point
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traffic, active, oneStops, polys, replayKey]);
+    return out;
+  }, [riders, g, L.w]);
 
-  // Animation loop: writes transforms straight to the SVG, no React re-renders.
   useEffect(() => {
-    if (portrait === null) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const P = portrait ? PORTRAIT : LANDSCAPE;
-    // Mutable simulation state lives here, not in render data.
-    const sim: Train[] = trains.map((t) => ({ ...t }));
+    const train = trainRef.current;
+    const bubble = bubbleRef.current;
+    if (!train || !bubble) return;
 
-    const place = (tr: Train) => {
-      const el = trainEls.current.get(tr.key);
-      if (!el) return;
-      const pt = at(polys[tr.lineIdx], tr.s);
-      const [x, y] = P.p([pt.u, pt.v]);
-      const deg = P.angle(pt.angle) + (tr.dir === -1 ? 180 : 0);
-      const body = el.querySelector<SVGGElement>("[data-body]");
-      body?.setAttribute("transform", `rotate(${deg.toFixed(1)})`);
-      el.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`);
-      const streak = el.querySelector("[data-streak]");
-      streak?.setAttribute("opacity", tr.phase === "move" ? "1" : "0");
-      if (tr.rider) {
-        const av = avatarEls.current.get(tr.key);
-        if (!av) return;
-        const laneV = P.portrait ? 125 : 92 - (tr.lane ?? 0) * 30;
-        const [lx, ly] = P.p([pt.u, laneV]);
-        av.setAttribute("transform", `translate(${lx.toFixed(1)},${ly.toFixed(1)})`);
-        const leader = av.querySelector("[data-leader]");
-        leader?.setAttribute("x2", (x - lx).toFixed(1));
-        leader?.setAttribute("y2", (y - ly).toFixed(1));
-      }
+    // Size the speech bubble to its text once.
+    const t = bubbleText.current;
+    const box = bubbleBox.current;
+    if (t && box) {
+      const w = t.getComputedTextLength() + 22;
+      box.setAttribute("x", String(-w / 2));
+      box.setAttribute("width", String(w));
+    }
+
+    const sEnd = g.stationS[target];
+    const place = (s: number, moving: boolean) => {
+      const p = g.at(s);
+      let ang = (Math.atan2(p.dy, p.dx) * 180) / Math.PI;
+      // Never upside down: on rows going left, mirror instead of rotating.
+      const flip = p.dx < -0.001;
+      if (flip) ang -= 180;
+      train.setAttribute("transform", `translate(${p.x} ${p.y}) rotate(${ang}) scale(${flip ? -1 : 1} 1)`);
+      train.dataset.moving = moving ? "true" : "false";
+      // Keep the bubble inside the map.
+      const bx = Math.max(110, Math.min(L.w - 110, p.x));
+      bubble.setAttribute("transform", `translate(${bx} ${p.y - 46})`);
     };
 
-    let ripple = 0;
-    const ripples: { el: SVGCircleElement; t: number }[] = [];
-    const spawnRipple = (tr: Train) => {
-      if (reduced) return;
-      const el = rippleEls.current[ripple++ % rippleEls.current.length];
-      if (!el) return;
-      const pt = at(polys[tr.lineIdx], tr.s);
-      const [x, y] = P.p([pt.u, pt.v]);
-      el.setAttribute("cx", x.toFixed(1));
-      el.setAttribute("cy", y.toFixed(1));
-      el.setAttribute("stroke", tr.line.color);
-      ripples.push({ el, t: 0 });
-    };
-
-    // Reduced motion: riders already at their stop, everything else parked.
-    if (reduced) {
-      for (const tr of sim) {
-        if (tr.rider) tr.s = tr.stops[tr.rider.station];
-        place(tr);
-      }
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || target === 0) {
+      place(sEnd, false);
+      bubble.style.opacity = "1";
       return;
     }
 
+    const ride = Math.max(1.8, 0.32 * target); // seconds
+    const wait = 2.8;
+    const cycle = ride + wait + 0.5;
     let raf = 0;
-    let last = performance.now();
-    let visible = true;
-    const step = (now: number) => {
-      raf = requestAnimationFrame(step);
-      if (!visible) {
-        last = now;
-        return;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const el = ((now - t0) / 1000) % cycle;
+      if (el < ride) {
+        place(ease(el / ride) * sEnd, true);
+        bubble.style.opacity = "0";
+        train.style.opacity = "1";
+      } else if (el < ride + wait) {
+        place(sEnd, false);
+        bubble.style.opacity = "1";
+      } else {
+        // short fade, then back to South Ferry
+        const f = (el - ride - wait) / 0.5;
+        train.style.opacity = String(1 - f);
+        bubble.style.opacity = String(1 - f);
       }
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-
-      for (const tr of sim) {
-        if (tr.phase === "docked") {
-          place(tr);
-          continue;
-        }
-        tr.t += dt;
-        if (tr.phase === "dwell") {
-          if (tr.t >= tr.dur) {
-            // pick the next stop
-            if (tr.rider) {
-              if (tr.stopIdx >= tr.rider.station) {
-                tr.phase = "docked";
-                continue;
-              }
-              tr.stopIdx += 1;
-            } else {
-              if (tr.stopIdx + tr.dir < 0 || tr.stopIdx + tr.dir >= tr.stops.length) tr.dir = (tr.dir * -1) as 1 | -1;
-              tr.stopIdx += tr.dir;
-            }
-            tr.from = tr.s;
-            tr.to = tr.stops[tr.stopIdx];
-            const dist = Math.abs(tr.to - tr.from);
-            tr.dur = tr.rider ? Math.max(0.16, dist / 260) : Math.max(0.45, dist / 95);
-            tr.phase = "move";
-            tr.t = 0;
-          }
-        } else {
-          const k = Math.min(1, tr.t / tr.dur);
-          tr.s = tr.from + (tr.to - tr.from) * (tr.rider ? k : easeInOut(k));
-          if (k >= 1) {
-            tr.phase = "dwell";
-            tr.t = 0;
-            tr.dur = tr.rider ? 0.04 : 0.7 + Math.random() * 0.9;
-            if (!tr.rider || tr.stopIdx === tr.rider.station) spawnRipple(tr);
-          }
-        }
-        place(tr);
-      }
-
-      for (let i = ripples.length - 1; i >= 0; i--) {
-        const r = ripples[i];
-        r.t += dt;
-        const k = r.t / 0.9;
-        if (k >= 1) {
-          r.el.setAttribute("opacity", "0");
-          ripples.splice(i, 1);
-          continue;
-        }
-        r.el.setAttribute("r", (6 + k * 20).toFixed(1));
-        r.el.setAttribute("opacity", (0.7 * (1 - k)).toFixed(2));
-      }
+      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(step);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [g, target, L.w]);
 
-    const io = new IntersectionObserver(([e]) => (visible = e.isIntersecting));
-    if (wrapRef.current) io.observe(wrapRef.current);
-    const onVis = () => (visible = document.visibilityState === "visible");
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      cancelAnimationFrame(raf);
-      io.disconnect();
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [trains, portrait, polys]);
-
-  // Close the meme popup on Escape / outside click.
-  useEffect(() => {
-    if (!popup) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPopup(null);
-    const onDown = (e: PointerEvent) => {
-      if (!(e.target as Element).closest?.("[data-popup],[data-train]")) setPopup(null);
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onDown);
-    };
-  }, [popup]);
-
-  const openTrain = (tr: Train) => {
-    const el = trainEls.current.get(tr.key);
-    const wrap = wrapRef.current;
-    if (!el || !wrap) return;
-    const a = el.getBoundingClientRect();
-    const b = wrap.getBoundingClientRect();
-    const meme = tr.memes.length ? tr.memes[pick.current++ % tr.memes.length] : null;
-    setPopup({ x: a.left + a.width / 2 - b.left, y: a.top - b.top, w: b.width, line: tr.line, meme });
-  };
-
-  /* ---------- board rows ---------- */
-  const rows: BoardRow[] = useMemo(() => {
-    const out: BoardRow[] = [];
-    const one = { letter: "1", bg: "#ee352e", fg: "#fff" };
-    const ranked = [...active].sort((a, b) => b.points - a.points);
-    if (me && me.points > 0) {
-      const left = Math.max(0, STOPS_TO_COLUMBIA - me.points);
-      out.push({ bullet: one, left: `You at ${SHORT_NAMES[me.station]}`, right: left === 0 ? "Arrived" : `${left} stops to go` });
-    }
-    ranked.filter((r) => !r.me).slice(0, 4).forEach((r) => {
-      const left = Math.max(0, STOPS_TO_COLUMBIA - r.points);
-      out.push({ bullet: one, left: `${r.name} at ${SHORT_NAMES[r.station]}`, right: left === 0 ? "Arrived" : `${left} stops` });
-    });
-    LINES.forEach((l) => {
-      const n = (traffic[l.vibe] ?? []).length;
-      out.push({
-        bullet: { letter: l.letter, bg: l.color, fg: l.fg },
-        left: `${VIBES[l.vibe].label} to ${l.terminals[1]}`,
-        right: `${trainsFor(n)} ${trainsFor(n) === 1 ? "train" : "trains"}`,
-      });
-    });
-    if (out.length === LINES.length) out.unshift({ bullet: one, left: "Everyone at South Ferry", right: "Vote to board" });
-    return out;
-  }, [active, me, traffic]);
-
-  if (portrait === null) {
-    return <div className="aspect-[1000/590] w-full rounded-xl bg-[#cfe2ec]" aria-hidden="true" />;
-  }
-
-  const lineOpacity = (i: number) => (focus === null || focus === i ? 1 : 0.18);
-  const replay = () => {
-    setPopup(null);
-    setReplayKey((k) => k + 1);
-  };
-  const fs = pr.portrait ? 13 : 11.5;
+  // Trees in the gap between rows, next to the Central Park stops.
+  const trees = [16, 17, 18, 19].flatMap((k, i) => {
+    const p = g.at(g.stationS[k]);
+    if (p.onArc) return [];
+    const big = L.key === "wide" ? 1.35 : 1;
+    return [{ x: p.x + (i % 2 ? 14 : -12), y: p.y + L.r - 2, s: (i % 2 ? 0.85 : 1) * big }];
+  });
+  const sf = g.at(0);
+  const end = g.at(g.total);
 
   return (
-    <div className="space-y-3">
-      <ArrivalsBoard rows={rows} />
+    <svg viewBox={`0 0 ${L.w} ${L.h}`} className={className} role="img" aria-label="The 1 train from South Ferry to Columbia, with this week's riders">
+      <rect width={L.w} height={L.h} rx={24} fill="#fff6df" />
+      {/* sky decorations */}
+      <Cloud x={L.w * 0.2} y={34} s={0.9} />
+      <Cloud x={L.w * 0.62} y={28} s={0.7} delay={2} />
+      <g transform={`translate(${end.x + (L.key === "wide" ? 52 : 26)} ${end.y - (L.key === "wide" ? 44 : 58)})`}>
+        <circle r={16} fill="#ffd84d" />
+        {Array.from({ length: 8 }, (_, i) => (
+          <line
+            key={i}
+            x1={0}
+            y1={-21}
+            x2={0}
+            y2={-26}
+            stroke="#ffc400"
+            strokeWidth={3}
+            strokeLinecap="round"
+            transform={`rotate(${i * 45})`}
+          />
+        ))}
+      </g>
 
-      <div ref={wrapRef} className="relative overflow-hidden rounded-xl border bg-[#cfe2ec]">
-        <svg
-          ref={svgRef}
-          viewBox={`0 0 ${pr.w} ${pr.h}`}
-          className="block h-auto w-full select-none"
-          role="img"
-          aria-labelledby="subway-title subway-desc"
-          key={`${pr.portrait}-${replayKey}`}
-        >
-          <title id="subway-title">Subway map: Race to Columbia</title>
-          <desc id="subway-desc">
-            The 1 line from South Ferry to 116 St–Columbia University with every rider at their stop, and the four other
-            caption lines with trains for this week&apos;s memes.
-          </desc>
+      {/* the harbour at the bottom */}
+      <path d={`M 0 ${L.h - 34} q 20 -10 40 0 t 40 0 t 40 0 t 40 0 t 40 0 t 40 0 Q 262 ${L.h - 30} 262 ${L.h} H 0 Z`} fill="#bfe6ff" />
+      <path
+        d={`M 18 ${L.h - 16} q 8 -5 16 0 M 62 ${L.h - 20} q 8 -5 16 0 M 120 ${L.h - 14} q 8 -5 16 0 M 170 ${L.h - 21} q 8 -5 16 0`}
+        fill="none"
+        stroke="#fff"
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
 
-          <defs>
-            {[...LINES.map((l) => [l.letter, l.color]), ["me", "#fccc0a"]].map(([id, c]) => (
-              <linearGradient key={id} id={`streak-${id}`} x1="0" x2="1" y1="0" y2="0">
-                <stop offset="0" stopColor={c} stopOpacity={0} />
-                <stop offset="1" stopColor={c} stopOpacity={0.75} />
-              </linearGradient>
-            ))}
-          </defs>
+      {trees.map((t, i) => (
+        <Tree key={i} {...t} />
+      ))}
 
-          {/* land, parks */}
-          <path d={pathD(NEW_JERSEY, pr) + "Z"} fill="#e7e9e3" />
-          <path d={pathD(BROOKLYN_QUEENS, pr) + "Z"} fill="#e7e9e3" />
-          <path d={pathD(MANHATTAN, pr) + "Z"} fill="#f3f4f0" stroke="#d6dad3" strokeWidth={1.5} />
-          <path d={pathD(CENTRAL_PARK, pr) + "Z"} fill="#cfe5c6" />
-          {AREA_LABELS.map((a) => {
-            const [x, y] = pr.p(a.at);
-            const turn = pr.portrait && a.kind !== "land";
-            if (!turn && (x < 40 || x > pr.w - 40 || y < 10 || y > pr.h - 10)) return null;
-            return (
-              <text
-                key={a.text}
-                x={x}
-                y={y}
-                transform={turn ? `rotate(-90 ${x} ${y})` : undefined}
-                dominantBaseline={turn ? "middle" : undefined}
-                textAnchor="middle"
-                fontSize={a.kind === "land" ? 15 : 12}
-                fontStyle={a.kind === "water" ? "italic" : "normal"}
-                fontWeight={a.kind === "land" ? 600 : 500}
-                fill={a.kind === "water" ? "#5d84a0" : a.kind === "park" ? "#4f8a5f" : "#9aa09a"}
-                letterSpacing={a.kind === "land" ? 1.5 : 0.3}
-              >
-                {a.text}
-              </text>
-            );
-          })}
+      {/* the track */}
+      <path d={g.d} fill="none" stroke="#ffd2cf" strokeWidth={24} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={g.d} fill="none" stroke="#ee352e" strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={g.d} fill="none" stroke="#fff" strokeOpacity={0.75} strokeWidth={2} strokeDasharray="1 11" strokeLinecap="round" />
 
-          {/* lines (drawn in on load) */}
-          {LINES.map((l, i) => (
-            <g key={l.letter} opacity={lineOpacity(i)} style={{ transition: "opacity .25s" }}>
-              <path
-                d={pathD(l.path, pr)}
-                fill="none"
-                stroke={l.color}
-                strokeWidth={i === 0 ? 10 : 8}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="line-draw"
-                style={{ strokeDasharray: polys[i].length, strokeDashoffset: polys[i].length, animationDelay: `${i * 160}ms` }}
-              />
-              {i > 0 &&
-                evenStops(polys[i]).map((s, k) => {
-                  const pt = at(polys[i], s);
-                  const [x, y] = pr.p([pt.u, pt.v]);
-                  return <circle key={k} cx={x} cy={y} r={2.6} fill="#fff" stroke="#16181a" strokeWidth={1.2} />;
-                })}
-            </g>
-          ))}
-
-          {/* terminal bullets */}
-          {LINES.map((l, i) =>
-            [0, 1].map((end) => {
-              const pts = l.path;
-              const a = end === 0 ? pts[0] : pts[pts.length - 1];
-              const b = end === 0 ? pts[1] : pts[pts.length - 2];
-              const d = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
-              const off: Pt = [a[0] + ((a[0] - b[0]) / d) * 20, a[1] + ((a[1] - b[1]) / d) * 20];
-              if (i === 0 && end === 1) return null; // Columbia gets its own marker
-              const [x, y] = pr.p(off);
-              return (
-                <g key={`${l.letter}-${end}`} opacity={lineOpacity(i)}>
-                  <circle cx={x} cy={y} r={11} fill={l.color} stroke="#fff" strokeWidth={2} />
-                  <text x={x} y={y + 4.3} textAnchor="middle" fontSize={12.5} fontWeight={700} fill={l.fg}>
-                    {l.letter}
-                  </text>
-                </g>
-              );
-            })
-          )}
-
-          {/* transfers */}
-          {TRANSFERS.map((t) => {
-            const [x0, y0] = pr.p([t.u, t.v0]);
-            const [x1, y1] = pr.p([t.u, t.v1]);
-            const x = Math.min(x0, x1) - 6.5;
-            const y = Math.min(y0, y1) - 6.5;
-            return (
-              <rect
-                key={t.name}
-                x={x}
-                y={y}
-                width={Math.abs(x1 - x0) + 13}
-                height={Math.abs(y1 - y0) + 13}
-                rx={6.5}
-                fill="#fff"
-                stroke="#16181a"
-                strokeWidth={2}
-              />
-            );
-          })}
-
-          {/* the 1's stations + labels */}
-          <g opacity={lineOpacity(0)}>
-            {oneStops.map((s, i) => {
-              const pt = at(polys[0], s);
-              const [x, y] = pr.p([pt.u, pt.v]);
-              const last = i === oneStops.length - 1;
-              const land = LANDMARKS.has(i);
-              const reached = active.some((r) => r.station >= i) && i > 0;
-              return (
-                <g key={i}>
-                  {last && <circle cx={x} cy={y} r={16} fill="none" stroke="#fccc0a" strokeWidth={3} className="beacon" />}
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r={last ? 9 : 4.6}
-                    fill={last ? "#fccc0a" : "#fff"}
-                    stroke="#16181a"
-                    strokeWidth={last ? 2.5 : 1.6}
-                  >
-                    <title>{`${STATIONS[i]}${reached ? `, reached by ${active.filter((r) => r.station >= i).length}` : ""}`}</title>
-                  </circle>
-                  {last && !pr.portrait ? (
-                    <g>
-                      <line x1={x} y1={y + 9} x2={x} y2={y + 41} stroke="#16181a" strokeWidth={1.6} />
-                      <rect x={x - 116} y={y + 41} width={140} height={40} rx={10} fill="#fccc0a" stroke="#16181a" strokeWidth={1.6} />
-                      <text x={x - 46} y={y + 58} textAnchor="middle" fontSize={13} fontWeight={700} fill="#16181a">
-                        116 St–Columbia
-                      </text>
-                      <text x={x - 46} y={y + 73} textAnchor="middle" fontSize={11} fontWeight={600} fill="#16181a">
-                        University · finish
-                      </text>
-                    </g>
-                  ) : last ? (
-                    <g>
-                      <rect x={x - 90} y={y - 17} width={76} height={34} rx={9} fill="#fccc0a" stroke="#16181a" strokeWidth={1.6} />
-                      <text x={x - 52} y={y - 3} textAnchor="middle" fontSize={12} fontWeight={700} fill="#16181a">
-                        116 St
-                      </text>
-                      <text x={x - 52} y={y + 11} textAnchor="middle" fontSize={11} fontWeight={600} fill="#16181a">
-                        Columbia
-                      </text>
-                    </g>
-                  ) : pr.portrait ? (
-                    <text
-                      x={x - 12}
-                      y={y + 4.2}
-                      textAnchor="end"
-                      fontSize={fs}
-                      fontWeight={last || land ? 700 : 500}
-                      fill={last ? "#16181a" : land ? "#16181a" : "#4a4f54"}
-                      stroke="#f3f4f0"
-                      strokeWidth={3}
-                      paintOrder="stroke"
-                    >
-                      {SHORT_NAMES[i]}
-                    </text>
-                  ) : (
-                    <text
-                      x={x + 5}
-                      y={y - 10}
-                      transform={`rotate(-45 ${x + 5} ${y - 10})`}
-                      fontSize={fs}
-                      fontWeight={land ? 700 : 500}
-                      fill={land ? "#16181a" : "#4a4f54"}
-                      stroke="#f3f4f0"
-                      strokeWidth={3}
-                      strokeOpacity={0.9}
-                      paintOrder="stroke"
-                    >
-                      {i === 12 || x + 5 + STATIONS[i].length * fs * 0.58 * 0.71 > pr.w - 8 ? SHORT_NAMES[i] : STATIONS[i]}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-          </g>
-
-          {/* ripples (pooled) */}
-          <g>
-            {Array.from({ length: 18 }, (_, i) => (
-              <circle
-                key={i}
-                ref={(el) => {
-                  if (el) rippleEls.current[i] = el;
-                }}
-                r={0}
-                fill="none"
-                strokeWidth={2.5}
-                opacity={0}
-              />
-            ))}
-          </g>
-
-          {/* trains */}
-          {trains.map((tr) => {
-            const r = tr.rider;
-            const label = r
-              ? `${r.me ? "Your train" : `${r.name}'s train`}, going to ${STATIONS[r.station]}`
-              : `${tr.line.letter} train (${VIBES[tr.line.vibe].label}), ${tr.memes.length ? `carrying ${tr.memes.length} meme${tr.memes.length === 1 ? "" : "s"}` : "empty"}`;
-            return (
-              <g
-                key={tr.key}
-                data-train
-                ref={(el) => {
-                  if (el) trainEls.current.set(tr.key, el);
-                  else trainEls.current.delete(tr.key);
-                }}
-                role={r ? undefined : "button"}
-                tabIndex={r ? undefined : 0}
-                aria-label={label}
-                className={r ? "" : "cursor-pointer outline-none [&:focus-visible_[data-body]_rect]:stroke-[#0039a6]"}
-                onClick={r ? undefined : () => openTrain(tr)}
-                onKeyDown={
-                  r
-                    ? undefined
-                    : (e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          openTrain(tr);
-                        }
-                      }
-                }
-                opacity={lineOpacity(tr.lineIdx)}
-              >
-                <g data-body>
-                  <rect
-                    data-streak
-                    x={-52}
-                    y={-4}
-                    width={40}
-                    height={8}
-                    rx={4}
-                    fill={`url(#streak-${r?.me ? "me" : tr.line.letter})`}
-                    opacity={0}
-                    style={{ transition: "opacity .3s" }}
-                  />
-                  <rect x={-15} y={-5.5} width={30} height={11} rx={5.5} fill={r?.me ? "#fccc0a" : tr.line.color} stroke="#16181a" strokeWidth={1.6} />
-                  <rect x={-9} y={-2.2} width={4} height={4.4} rx={1} fill="#fff" opacity={0.9} />
-                  <rect x={-2} y={-2.2} width={4} height={4.4} rx={1} fill="#fff" opacity={0.9} />
-                  <rect x={5} y={-2.2} width={4} height={4.4} rx={1} fill="#fff" opacity={0.9} />
-                  <circle cx={13} cy={0} r={1.8} fill="#fff6c4" />
-                  {!r && <rect x={-24} y={-22} width={48} height={44} fill="transparent" />}
-                </g>
-              </g>
-            );
-          })}
-
-          {/* riders: a callout per rider, joined to their train by a dashed leader */}
-          {trains
-            .filter((tr) => tr.rider)
-            .map((tr) => {
-              const r = tr.rider as MapRider;
-              const hidden = pr.portrait && (tr.stack ?? 0) > 0;
-              const others = active.filter((x) => x.station === r.station).length - 1;
-              return (
-                <g
-                  key={`av-${tr.key}`}
-                  ref={(el) => {
-                    if (el) avatarEls.current.set(tr.key, el);
-                    else avatarEls.current.delete(tr.key);
-                  }}
-                  display={hidden ? "none" : undefined}
-                  opacity={lineOpacity(0)}
-                  pointerEvents="none"
-                  transform="translate(-100 -100)"
-                >
-                  <line data-leader x1={0} y1={0} x2={0} y2={0} stroke="#16181a" strokeWidth={1.2} strokeDasharray="3 3" opacity={0.65} />
-                  <circle r={r.me ? 12.5 : 11} fill={r.me ? "#fccc0a" : "#fff"} stroke="#16181a" strokeWidth={r.me ? 2.4 : 1.6} />
-                  {r.avatarUrl ? (
-                    <>
-                      <clipPath id={`av-${tr.key}`}>
-                        <circle r={9} />
-                      </clipPath>
-                      <image href={r.avatarUrl} x={-9} y={-9} width={18} height={18} clipPath={`url(#av-${tr.key})`} preserveAspectRatio="xMidYMid slice" />
-                    </>
-                  ) : (
-                    <text y={4.3} textAnchor="middle" fontSize={12} fontWeight={700} fill="#16181a">
-                      {initials(r.name)}
-                    </text>
-                  )}
-                  {!pr.portrait && (
-                    <g transform="translate(16 0)">
-                      <rect x={0} y={-9} width={r.me ? 34 : Math.min(92, r.name.length * 6.6 + 12)} height={18} rx={9} fill={r.me ? "#16181a" : "#fff"} stroke="#16181a" strokeWidth={1.2} />
-                      <text x={r.me ? 17 : 6} y={4} textAnchor={r.me ? "middle" : "start"} fontSize={11} fontWeight={700} fill={r.me ? "#fccc0a" : "#16181a"}>
-                        {r.me ? "You" : r.name.slice(0, 12)}
-                      </text>
-                    </g>
-                  )}
-                  {pr.portrait && others > 0 && (
-                    <g transform="translate(10 -10)">
-                      <circle r={7.5} fill="#16181a" />
-                      <text y={3.3} textAnchor="middle" fontSize={9} fontWeight={700} fill="#fff">
-                        +{others}
-                      </text>
-                    </g>
-                  )}
-                </g>
-              );
-            })}
-        </svg>
-
-        {/* meme popup */}
-        {popup && (
-          <div
-            data-popup
-            role="dialog"
-            aria-label={`${popup.line.letter} train`}
-            className="absolute z-10 w-64 -translate-x-1/2 -translate-y-full rounded-xl border bg-white p-3 text-sm shadow-lg"
-            style={{ left: Math.max(136, Math.min(popup.x, popup.w - 136)), top: Math.max(popup.y - 8, 150) }}
-          >
-            <p className="flex items-center gap-2 text-xs font-semibold text-muted">
-              <span
-                className="flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold"
-                style={{ background: popup.line.color, color: popup.line.fg }}
-              >
-                {popup.line.letter}
-              </span>
-              {VIBES[popup.line.vibe].label} line
-            </p>
-            {popup.meme ? (
-              <>
-                <p className="mt-2 text-[15px] font-semibold leading-snug text-ink">{popup.meme.text}</p>
-                <p className="mt-1 text-xs text-muted">
-                  by {popup.meme.author}, {popup.meme.score >= 0 ? "+" : ""}
-                  {popup.meme.score}
-                </p>
-                <Link href={`/p/${popup.meme.postId}#c-${popup.meme.id}`} className="mt-2 inline-block text-sm font-semibold text-bullet-blue hover:underline">
-                  Open this meme
-                </Link>
-              </>
-            ) : (
-              <>
-                <p className="mt-2 text-[15px] leading-snug text-ink">This train is running empty. Post a moment in this voice to put memes on it.</p>
-                <Link href="/create" className="mt-2 inline-block text-sm font-semibold text-bullet-blue hover:underline">
-                  Post a moment
-                </Link>
-              </>
-            )}
-          </div>
-        )}
-
-        {!pr.portrait && (
-          <button
-            type="button"
-            onClick={replay}
-            className="absolute bottom-3 right-3 rounded-full border border-ink/15 bg-white/95 px-3.5 py-2 text-sm font-semibold text-ink shadow-sm hover:bg-white"
-          >
-            Replay the week
-          </button>
-        )}
-      </div>
-
-      {pr.portrait && (
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted">Tap a train to read its meme.</p>
-          <button
-            type="button"
-            onClick={replay}
-            className="shrink-0 rounded-full border bg-white px-3.5 py-2 text-sm font-semibold text-ink hover:border-ink/40"
-          >
-            Replay the week
-          </button>
-        </div>
-      )}
-
-      {/* legend: hover a line to light it up */}
-      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        {LINES.map((l, i) => {
-          const n = (traffic[l.vibe] ?? []).length;
+      {/* stations */}
+      {STATIONS.map((name, k) => {
+        const p = g.at(g.stationS[k]);
+        const lm = LANDMARKS[k];
+        if (!lm) {
           return (
-            <li key={l.letter}>
-              <button
-                type="button"
-                onMouseEnter={() => setHover(i)}
-                onMouseLeave={() => setHover(null)}
-                onFocus={() => setHover(i)}
-                onBlur={() => setHover(null)}
-                onClick={() => setPinned((f) => (f === i ? null : i))}
-                aria-pressed={pinned === i}
-                className={`flex w-full items-center gap-2.5 rounded-xl border p-2.5 text-left transition-colors sm:gap-3 sm:p-3 ${
-                  focus === i ? "border-ink bg-white" : "bg-card hover:border-ink/40"
-                }`}
-              >
-                <span
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-bold sm:h-8 sm:w-8"
-                  style={{ background: l.color, color: l.fg }}
-                >
-                  {l.letter}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold sm:text-[15px]">{VIBES[l.vibe].label}</span>
-                  <span className="block text-xs text-muted">
-                    {trainsFor(n)} {trainsFor(n) === 1 ? "train" : "trains"} · {n} {n === 1 ? "meme" : "memes"}
-                  </span>
-                </span>
-              </button>
-            </li>
+            <circle key={k} cx={p.x} cy={p.y} r={4.5} fill="#fff" stroke="#16181a" strokeWidth={2}>
+              <title>{name}</title>
+            </circle>
           );
-        })}
-      </ul>
-      <p className="text-sm text-muted">
-        Every two memes written in a voice this week put another train on its line{pr.portrait ? "" : "; click one to read the meme it's carrying"}. Your
-        votes, posts and upvotes move your own train up the 1. Pick a line above to light it up.
-      </p>
+        }
+        // Labels sit under the track; on a bend they go inside the curve, where there's room.
+        const side = p.onArc ? (p.x > L.w / 2 ? -1 : 1) : 0;
+        const lx = side ? p.x + side * 22 : Math.max(50, Math.min(L.w - 50, p.x));
+        const ly = side ? p.y + 5 : p.y + 31;
+        const anchor = side === -1 ? "end" : side === 1 ? "start" : "middle";
+        return (
+          <g key={k}>
+            <title>{name}</title>
+            <circle cx={p.x} cy={p.y} r={14} fill="#fff" stroke="#16181a" strokeWidth={2.2} />
+            <text x={p.x} y={p.y + 5} textAnchor="middle" fontSize={14}>
+              {lm.icon}
+            </text>
+            <text
+              x={lx}
+              y={ly}
+              textAnchor={anchor}
+              fontSize={L.key === "wide" ? 13 : 12.5}
+              fontWeight={700}
+              fill="#16181a"
+              stroke="#fff6df"
+              strokeWidth={4}
+              paintOrder="stroke"
+            >
+              {lm.label}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* start and finish */}
+      <g transform={`translate(${end.x + 6} ${end.y - 44})`}>
+        <line x1={0} y1={0} x2={0} y2={28} stroke="#16181a" strokeWidth={2} strokeLinecap="round" />
+        <path d="M 0 0 h 16 v 10 h -16 Z" fill="#fff" stroke="#16181a" strokeWidth={1.5} />
+        <path d="M 0 0 h 4 v 5 h -4 Z M 8 0 h 4 v 5 h -4 Z M 4 5 h 4 v 5 h -4 Z M 12 5 h 4 v 5 h -4 Z" fill="#16181a" />
+      </g>
+
+      {/* other riders */}
+      {pins.map(({ r, x, y }) => (
+        <g key={r.id} transform={`translate(${x} ${y})`}>
+          <Pin r={r} layoutKey={L.key} />
+        </g>
+      ))}
+
+      {/* you */}
+      <g ref={trainRef} className="cm-train" transform={`translate(${sf.x} ${sf.y})`}>
+        <Train />
+      </g>
+      <g ref={bubbleRef} style={{ opacity: 0, transition: "opacity 200ms" }} pointerEvents="none">
+        <rect ref={bubbleBox} x={-80} y={-15} width={160} height={26} rx={13} fill="#16181a" />
+        <path d="M -6 10 L 0 17 L 6 10 Z" fill="#16181a" />
+        <text ref={bubbleText} y={3.5} textAnchor="middle" fontSize={12.5} fontWeight={700} fill="#fff">
+          {message}
+        </text>
+      </g>
+    </svg>
+  );
+}
+
+export default function SubwayMap({ riders }: { riders: MapRider[] }) {
+  const me = riders.find((r) => r.me);
+  return (
+    <div className="overflow-hidden rounded-[24px] border-2 border-ink/10 bg-[#fff6df]">
+      <style>{`
+        .cm-wheel { transform-box: fill-box; transform-origin: center; animation: cm-spin .45s linear infinite; }
+        .cm-train[data-moving="false"] .cm-wheel { animation-play-state: paused; }
+        .cm-bob { animation: cm-bob .5s ease-in-out infinite alternate; }
+        .cm-train[data-moving="false"] .cm-bob { animation-duration: 1.4s; }
+        .cm-cloud { animation: cm-drift 9s ease-in-out infinite alternate; }
+        @keyframes cm-spin { to { transform: rotate(360deg); } }
+        @keyframes cm-bob { from { transform: translateY(0); } to { transform: translateY(-1.6px); } }
+        @keyframes cm-drift { from { transform: translateX(-14px); } to { transform: translateX(18px); } }
+        @media (prefers-reduced-motion: reduce) { .cm-wheel, .cm-bob, .cm-cloud { animation: none; } }
+      `}</style>
+      <MapSvg L={WIDE} riders={riders} className="hidden h-auto w-full sm:block" />
+      <MapSvg L={TALL} riders={riders} className="block h-auto w-full sm:hidden" />
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t-2 border-ink/5 bg-white/60 px-4 py-2.5 text-[13px] text-ink/80">
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="inline-block h-3 w-5 rounded-md border-2 border-ink bg-bullet-red" />
+          {me ? "You" : "The 1 train"}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="inline-block h-3.5 w-3.5 rounded-full border-2 border-ink bg-[#e9e3ff]" />
+          Other riders
+        </span>
+        <span>Every vote = 1 stop uptown</span>
+      </div>
     </div>
   );
 }

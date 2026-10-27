@@ -4,7 +4,7 @@ import { Avatar, displayName } from "@/app/components/PostCard";
 import { BadgeLegend, BadgeRow, ProgressLine, ordinal, riderStatus } from "@/app/components/Race";
 import { LineBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
-import { STATIONS, STOPS_TO_COLUMBIA, getLineTraffic, getRace } from "@/lib/race";
+import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
 import SubwayMap, { type MapRider } from "./SubwayMap";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ const RULES = [
 ];
 
 export default async function RacePage() {
-  const [{ user }, race, traffic] = await Promise.all([getCurrentProfile(), getRace(), getLineTraffic()]);
+  const [{ user }, race] = await Promise.all([getCurrentProfile(), getRace()]);
   const meId = user?.id ?? null;
   const me = race.riders.find((r) => r.user_id === meId);
   const active = race.riders.filter((r) => r.points_week > 0);
@@ -43,18 +43,26 @@ export default async function RacePage() {
         <h1 id="race-title" className="mt-3 text-[30px] font-bold leading-[1.08] tracking-tight sm:text-[40px]">
           Race to Columbia
         </h1>
-        <p className="mt-2 max-w-xl text-[15px] text-white/80">
-          Everyone starts the week at South Ferry. Voting, posting and getting upvotes move you up the 1 train. First
-          one to Columbia wins the week; the race restarts every Monday.
+        <p className="mt-2 max-w-xl text-[16px] text-white/85">
+          Every vote moves you one stop up the 1 train. First to Columbia wins the week.
         </p>
-        <ul className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
-          {RULES.map((r) => (
-            <li key={r.what}>
-              <span className="font-bold text-metro">{r.pts} stop{r.pts === "+1" ? "" : "s"}</span>{" "}
-              <span className="text-white/80">{r.what}</span>
-            </li>
-          ))}
-        </ul>
+        <details className="group mt-4 max-w-xl">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-metro hover:underline [&::-webkit-details-marker]:hidden">
+            <span className="group-open:hidden">How scoring works ↓</span>
+            <span className="hidden group-open:inline">Hide scoring ↑</span>
+          </summary>
+          <ul className="mt-2 space-y-1 text-sm">
+            {RULES.map((r) => (
+              <li key={r.what}>
+                <span className="font-bold text-metro">
+                  {r.pts} stop{r.pts === "+1" ? "" : "s"}
+                </span>{" "}
+                <span className="text-white/80">{r.what}</span>
+              </li>
+            ))}
+            <li className="text-white/60">Everyone restarts at South Ferry every Monday.</li>
+          </ul>
+        </details>
       </section>
 
       {user && me && (
@@ -103,9 +111,9 @@ export default async function RacePage() {
           <h2 id="map" className="text-xl font-bold tracking-tight">
             The 1 line right now
           </h2>
-          <p className="text-sm text-muted">Every rider is a train on the 1. The other lines carry this week&apos;s memes.</p>
+          <p className="text-sm text-muted">{me ? "The red train is you." : "Everyone on the line this week."}</p>
         </div>
-        <SubwayMap riders={mapRiders} traffic={traffic} />
+        <SubwayMap riders={mapRiders} />
         {!race.exact && (
           <p className="mt-2 text-xs text-muted">
             Estimated from posts and upvotes. Run supabase/week5.sql to count votes too.
