@@ -14,6 +14,25 @@ type Selection = { kind: "rider"; id: string } | { kind: "station"; k: number } 
 
 const POLL_MS = 20_000;
 
+/** Station labels and rider bubbles are HTML laid over the 3D scene (CSS2DRenderer). */
+const LABEL_CSS = `
+.lm-label { pointer-events: auto; cursor: pointer; font: inherit; white-space: nowrap; border: 0; background: none; padding: 0; color: #16181a; }
+.lm-major { font-size: 14px; font-weight: 800; background: #fff; border: 2.5px solid #16181a; border-radius: 999px; padding: 3px 10px; box-shadow: 0 3px 0 rgba(22,24,26,.18); }
+.lm-minor { font-size: 12px; font-weight: 700; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
+.lm-major:hover, .lm-minor:hover { transform: translateY(-1px); }
+.lm-bubble { pointer-events: auto; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: transform .15s; }
+.lm-bubble:hover, .lm-selected { transform: scale(1.12); }
+.lm-face { position: relative; width: 34px; height: 34px; border-radius: 999px; background: #e9e3ff; border: 3px solid #fff; outline: 2.5px solid #16181a; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,.18); }
+.lm-face img { width: 100%; height: 100%; object-fit: cover; }
+.lm-me .lm-face { width: 42px; height: 42px; background: #fff3b0; border-color: #fccc0a; }
+.lm-name { font-size: 12px; font-weight: 800; color: #16181a; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
+.lm-hint { font-size: 12px; font-weight: 800; color: #fff; background: #16181a; border-radius: 999px; padding: 3px 10px; margin-bottom: 2px; animation: lm-pulse 1.6s ease-in-out infinite; }
+.lm-compact .lm-face { width: 22px; height: 22px; font-size: 9px; border-width: 2px; }
+.lm-compact .lm-name { display: none; }
+@keyframes lm-pulse { 50% { transform: scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .lm-hint { animation: none; } }
+`;
+
 function initials(name: string) {
   return (
     name
@@ -260,6 +279,7 @@ export default function LiveMap({
       aria-modal="true"
       aria-label="Race to Columbia live map"
     >
+      <style>{LABEL_CSS}</style>
       <div ref={hostRef} className="absolute inset-0" role="application" aria-label="Map. Drag to move, scroll or pinch to zoom, tap a train for details." />
 
       {!ready && !failed && (
