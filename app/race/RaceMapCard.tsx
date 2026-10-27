@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import SubwayMap, { type MapRider } from "./SubwayMap";
+import MapErrorBoundary from "./live/MapErrorBoundary";
 
 // The WebGL map is only downloaded when someone opens it.
 const loadLiveMap = () => import("./live/LiveMap");
@@ -98,7 +99,9 @@ export default function RaceMapCard({ riders, startOpen = false }: { riders: Map
         </button>
       </div>
       {open && (
-        <LiveMap initialRiders={riders} pollUrl="/race/riders" onClose={hide} transitionName="race-map" />
+        <MapErrorBoundary riders={riders} onClose={hide}>
+          <LiveMap initialRiders={riders} pollUrl="/race/riders" onClose={hide} transitionName="race-map" />
+        </MapErrorBoundary>
       )}
     </>
   );

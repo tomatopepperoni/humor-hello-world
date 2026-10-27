@@ -39,6 +39,8 @@ export type SceneEvents = {
   onSelectStation: (k: number) => void;
   onArrive: (r: LiveRider) => void;
   onCameraChange?: (following: boolean) => void;
+  /** the renderer died (context lost, or an exception in the frame loop) */
+  onFatal?: (e: unknown) => void;
 };
 
 const COL = {
@@ -159,20 +161,21 @@ export class LiveScene {
     this.cz = this.g.height / 2;
     this.reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const coarse = window.matchMedia("(pointer: coarse)").matches || Math.min(window.innerWidth, window.innerHeight) < 600;
-    this.quality = coarse ? "medium" : "high";
+    const q = new URLSearchParams(window.location.search).get("quality");
+    this.quality = q === "low" || q === "medium" || q === "high" ? q : coarse ? "medium" : "high";
     const forced = new URLSearchParams(window.location.search).get("time");
     this.forced = forced === "day" ? 13 : forced === "dusk" ? 17.6 : forced === "night" ? 23 : null;
 
     const w = host.clientWidth || 1;
     const h = host.clientHeight || 1;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality === "high" ? 2 : this.quality === "medium" ? 1.5 : 1));
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Neutral tone mapping keeps the pastels pastel (ACES greys them out)
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = this.quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.domElement.style.display = "block";
     this.renderer.domElement.style.touchAction = "none";
@@ -211,6 +214,7 @@ export class LiveScene {
 
     this.resizeObs = new ResizeObserver(() => this.resize());
     this.resizeObs.observe(host);
+    this.renderer.domElement.addEventListener("webglcontextlost", this.onLost);
     this.renderer.domElement.addEventListener("pointerdown", this.onDown);
     this.renderer.domElement.addEventListener("pointerup", this.onUp);
     document.addEventListener("visibilitychange", this.onVisibility);
@@ -628,8 +632,10 @@ export class LiveScene {
         this.trains.set(r.id, t);
         if (intro && !this.reduce) this.rideTo(t, 0, target, now + 900 + (sorted.length - rank) * 150);
         else this.rideTo(t, target, target, now);
-      } else if (r.station !== t.rider.station) {
-        this.rideTo(t, t.s, target, now);
+      } else if (r.station !== t.rider.station || r.points !== t.rider.points) {
+        const delta = r.points - t.rider.points;
+        if (r.station !== t.rider.station) this.rideTo(t, t.s, target, now);
+        if (delta > 0) this.pop(t, `+${delta}`);
       }
       t.rider = r;
     });
@@ -772,9 +778,184 @@ export class LiveScene {
     if (on && !this.audio) this.audio = new AudioContext();
   }
 
-  confetti() {
-    /* fireworks arrive in phase 3 */
+  /* ------------------------------------------------------------------ effects */
+
+  private ripples: { mesh: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>; t: number }[] = [];
+  private bursts: { pts: THREE.Points; vel: Float32Array; t: number; delay: number }[] = [];
+
+  /** A ring that spreads out from the platform when a train pulls in. */
+  private ripple(k: number) {
+    if (this.reduce) return;
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(20, 1.6, 8, 48),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(COL.yellow).multiplyScalar(2.2), transparent: true, depthWrite: false, toneMapped: false })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.copy(this.v(this.g.stations[k], DECK_Y + 3));
+    this.scene.add(ring);
+    this.ripples.push({ mesh: ring, t: 0 });
   }
+
+  /** "+1" floating up from a train that just scored. */
+  private pop(t: TrainView, text: string) {
+    const el = document.createElement("span");
+    el.className = "lm-pop";
+    el.textContent = text;
+    const obj = new CSS2DObject(el);
+    obj.position.set(0, 62, 0);
+    t.group.add(obj);
+    window.setTimeout(() => {
+      el.remove();
+      t.group.remove(obj);
+    }, 1500);
+  }
+
+  private spark: THREE.Texture | null = null;
+
+  /** A soft round dot, so firework sparks aren't square. */
+  private sparkTexture() {
+    if (this.spark) return this.spark;
+    const c = document.createElement("canvas");
+    c.width = c.height = 32;
+    const x = c.getContext("2d")!;
+    const g = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.35, "rgba(255,255,255,0.85)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    x.fillStyle = g;
+    x.fillRect(0, 0, 32, 32);
+    this.spark = new THREE.CanvasTexture(c);
+    return this.spark;
+  }
+
+  /** Fireworks over Low Library when someone reaches Columbia. */
+  fireworks() {
+    if (this.reduce) return;
+    const base = this.v(this.g.at(40.8079, -73.9622), 0);
+    const hues = [0xff5d8f, 0xfccc0a, 0x4cc9f0, 0x7bff9b, 0xffffff, 0xb983ff];
+    for (let b = 0; b < 5; b++) {
+      const n = 160;
+      const pos = new Float32Array(n * 3);
+      const vel = new Float32Array(n * 3);
+      const colr = new Float32Array(n * 3);
+      const c = new THREE.Color(hues[(b + Math.floor(Math.random() * 6)) % hues.length]).multiplyScalar(3); // HDR so it blooms
+      const o = new THREE.Vector3(base.x + (Math.random() - 0.5) * 160, 150 + Math.random() * 70, base.z + (Math.random() - 0.5) * 120);
+      for (let i = 0; i < n; i++) {
+        const dir = new THREE.Vector3().randomDirection().multiplyScalar(70 + Math.random() * 40);
+        pos.set([o.x, o.y, o.z], i * 3);
+        vel.set([dir.x, dir.y, dir.z], i * 3);
+        colr.set([c.r, c.g, c.b], i * 3);
+      }
+      const geo3 = new THREE.BufferGeometry();
+      geo3.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo3.setAttribute("color", new THREE.BufferAttribute(colr, 3));
+      const pts = new THREE.Points(
+        geo3,
+        new THREE.PointsMaterial({ size: 10, map: this.sparkTexture(), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })
+      );
+      pts.visible = false;
+      this.scene.add(pts);
+      this.bursts.push({ pts, vel, t: 0, delay: b * 0.38 });
+    }
+  }
+
+  private updateFx(dt: number) {
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const r = this.ripples[i];
+      r.t += dt;
+      const k = r.t / 1.0;
+      r.mesh.scale.setScalar(1 + k * 2.4);
+      r.mesh.material.opacity = 1 - k;
+      if (k >= 1) {
+        this.scene.remove(r.mesh);
+        r.mesh.geometry.dispose();
+        r.mesh.material.dispose();
+        this.ripples.splice(i, 1);
+      }
+    }
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const b = this.bursts[i];
+      b.t += dt;
+      const life = b.t - b.delay;
+      if (life < 0) continue;
+      b.pts.visible = true;
+      const pos = b.pts.geometry.attributes.position as THREE.BufferAttribute;
+      const arr = pos.array as Float32Array;
+      const drag = Math.pow(0.12, dt);
+      for (let j = 0; j < arr.length; j += 3) {
+        b.vel[j] *= drag;
+        b.vel[j + 1] = b.vel[j + 1] * drag - 60 * dt;
+        b.vel[j + 2] *= drag;
+        arr[j] += b.vel[j] * dt * 3;
+        arr[j + 1] += b.vel[j + 1] * dt * 3;
+        arr[j + 2] += b.vel[j + 2] * dt * 3;
+      }
+      pos.needsUpdate = true;
+      const m = b.pts.material as THREE.PointsMaterial;
+      m.opacity = clamp(1.6 - life / 1.3, 0, 1);
+      if (life > 2.2) {
+        this.scene.remove(b.pts);
+        b.pts.geometry.dispose();
+        m.dispose();
+        this.bursts.splice(i, 1);
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ adaptive quality */
+
+  private fps = { frames: 0, time: 0, warm: 0 };
+
+  /** Drops to a cheaper quality level when the frame rate stays low. */
+  private watchFps(raw: number) {
+    const f = this.fps;
+    f.warm += raw;
+    if (f.warm < 4 || document.hidden) return; // ignore the loading seconds
+    f.frames++;
+    f.time += raw;
+    if (f.time < 3) return;
+    const fps = f.frames / f.time;
+    f.frames = 0;
+    f.time = 0;
+    if (this.quality === "high" && fps < 45) this.setQuality("medium");
+    else if (this.quality === "medium" && fps < 28) this.setQuality("low");
+  }
+
+  setQuality(q: "high" | "medium" | "low") {
+    if (q === this.quality) return;
+    this.quality = q;
+    const dpr = Math.min(window.devicePixelRatio || 1, q === "high" ? 2 : q === "medium" ? 1.5 : 1);
+    this.renderer.setPixelRatio(dpr);
+    if (q !== "high" && this.composer && this.tiltH && this.tiltV) {
+      this.composer.removePass(this.tiltH);
+      this.composer.removePass(this.tiltV);
+      this.tiltH = this.tiltV = null;
+    }
+    if (q === "medium") {
+      this.sun.shadow.mapSize.set(1024, 1024);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.composer?.setPixelRatio(dpr);
+    }
+    if (q === "low") {
+      this.composer?.dispose();
+      this.composer = null;
+      this.bloom = null;
+      this.renderer.shadowMap.enabled = false;
+      this.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material;
+        if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
+        else if (m) m.needsUpdate = true;
+      });
+    }
+    this.resize();
+  }
+
+  private onLost = (e: Event) => {
+    e.preventDefault();
+    this.renderer.setAnimationLoop(null);
+    this.ev.onFatal?.(new Error("WebGL context lost"));
+  };
 
   /* ------------------------------------------------------------------ input */
 
@@ -829,6 +1010,16 @@ export class LiveScene {
 
   private tick() {
     if (this.destroyed) return;
+    try {
+      this.frame();
+    } catch (e) {
+      // never loop on a broken frame; React swaps in the 2D map
+      this.renderer.setAnimationLoop(null);
+      this.ev.onFatal?.(e);
+    }
+  }
+
+  private frame() {
     this.clock.update();
     const raw = this.clock.getDelta();
     const dt = Math.min(raw, 0.05);
@@ -864,8 +1055,9 @@ export class LiveScene {
             t.moving = false;
             t.s = t.to;
             this.chime();
+            this.ripple(t.rider.station);
             if (t.rider.station >= STOPS_TO_COLUMBIA) {
-              this.confetti();
+              this.fireworks();
               this.ev.onArrive(t.rider);
             }
           }
@@ -912,6 +1104,8 @@ export class LiveScene {
     this.controls.update(Math.min(raw, 0.25));
     if (this.time - this.lightCheck > 5) this.applyLight();
     this.dio.update(this.time, this.night, motion);
+    this.updateFx(dt);
+    this.watchFps(raw);
     if (this.tiltH && this.tiltV) {
       // miniature look: a little blur at the top and bottom, only when close
       const k = clamp((1800 - dist) / 1200, 0, 1);
@@ -953,6 +1147,7 @@ export class LiveScene {
       this.renderer.setAnimationLoop(null);
       this.resizeObs.disconnect();
       document.removeEventListener("visibilitychange", this.onVisibility);
+      this.renderer.domElement.removeEventListener("webglcontextlost", this.onLost);
       this.renderer.domElement.removeEventListener("pointerdown", this.onDown);
       this.renderer.domElement.removeEventListener("pointerup", this.onUp);
       this.controls.dispose();
@@ -965,6 +1160,7 @@ export class LiveScene {
         else mat?.dispose();
       });
       this.composer?.dispose();
+      this.spark?.dispose();
       this.renderer.dispose();
       this.renderer.domElement.remove();
       this.labels.domElement.remove();

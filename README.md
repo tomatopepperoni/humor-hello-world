@@ -74,35 +74,49 @@ The race has two levels, so the race page stays simple and the detail is one tap
    six landmark stops, other riders as avatar pins, and your smiling red train riding to your stop. Two grey
    1 trains run up and down the whole time, so the card never looks frozen (with 0 points your train waits at
    South Ferry with a "vote to leave" bubble; with reduced motion it gently pulses instead of moving).
-2. **Live map** (`app/race/live/`, PixiJS v8 + pixi-viewport, WebGL): tap the card or "Open live map". The card
-   grows into a full-screen view (View Transitions API), and the code is loaded only then (`next/dynamic`,
-   prefetched when the page is idle). It is also its own page at `/race/map`, and `/race?map=live` deep-links
-   into it; the back button closes it.
+2. **Live map** (`app/race/live/`, three.js + camera-controls): tap the card or "Open live map". The card grows
+   into a full-screen 3D toy diorama of Manhattan (View Transitions API). The code is loaded only then
+   (`next/dynamic`, prefetched when the page is idle). It is also its own page at `/race/map`, and
+   `/race?map=live` deep-links into it; the back button closes it.
 
-**What's on the live map:** Manhattan drawn from real coordinates, turned 29° so the grid runs straight up;
-pastel city blocks with a few taller buildings, Central Park with the Reservoir and swaying trees, water
-shimmer, the Staten Island ferry, Statue of Liberty, One WTC, Empire State, Times Square billboards and Low
-Library at Columbia. The 1 line is a smooth spline through the real stations. Every rider is a train with
-their photo bubble; yours is yellow. On open, the week replays: everyone leaves South Ferry and rides to
-where they are now. Three grey service trains stop at every station. Drifting clouds (with parallax),
-sparks on curves, a ripple when a train arrives, "+1" pops when someone scores, confetti at Columbia. The
-lighting follows New York time (day, dusk, night with lit windows).
+**The scene** (`scene.ts`: renderer, camera, track, trains, effects; `diorama.ts`: the city; `geo.ts`: the
+projection). Lat/lng are turned into metres and rotated 29° so the street grid runs straight. Manhattan,
+New Jersey and Brooklyn are bevelled slabs in an animated river. About 4,000 instanced pastel buildings sit on
+the street grid (tall downtown and in midtown, low in the Village and uptown, kept low along the line), with
+window bands that light up at night. Central Park has the Reservoir and ~500 swaying low-poly trees. The
+landmarks are built from primitives, with no downloaded models: Empire State, One WTC, the Statue of Liberty,
+Times Square billboards, and Low Library with the finish arch and a waving flag. There's also the ferry and
+high clouds. The 1 line is an elevated white viaduct with two red rails, pillars, platforms and a round 1 sign
+at every stop.
 
-**Controls:** drag, pinch or scroll to move and zoom. Buttons: Find my train (flies to you and follows),
-Whole line, Replay the week, zoom in/out, sound (off by default). Tap a train for its rider card, tap a
-station to see who's there. Keyboard: arrows pan, `+`/`-` zoom, `F` finds you, `Esc` closes.
+**Trains:** every rider is a smiling train with an HTML photo bubble (yours is yellow and a bit bigger).
+Three grey service trains stop at every station. On open, the camera glides down from above while the week
+replays. When someone scores, their train rides forward with a "+1"; a ring ripples out from the platform; and
+reaching Columbia sets off fireworks over Low Library.
 
-**Live data:** the map polls `GET /race/riders` every 20 seconds (paused while the tab is hidden) and moves
-the trains that scored. Supabase Realtime isn't used because votes are private per user under RLS, so a
-client subscription could only ever see its own votes.
+**Light:** the sun's path and colour follow New York time (day, dusk, a moonlit night with glowing windows,
+rails, signs and headlights). Add `?time=day|dusk|night` to force it. Post-processing: MSAA, bloom on
+emissives only, a vignette, and a light tilt-shift when zoomed in.
 
-**Demo mode:** `/race/map?demo=1` uses 13 made-up riders and has someone score every few seconds, so the map
-can be tried without data. Add `&time=day|dusk|night` to force the lighting.
+**Controls:** drag to move, scroll or pinch to zoom, right-drag or two fingers to tilt and turn. Buttons:
+Find my train (a chase cam that follows you), Whole line, Replay the week, zoom in/out, sound (off by
+default). Tap a train for its rider card, or a station for who's there. Keyboard: arrows pan, `+`/`-` zoom,
+`F` finds you, `Esc` closes.
 
-**Performance and accessibility:** pixel ratio is capped at 2, the ticker stops when the tab is hidden, and
-labels and avatars stay the same size on screen at every zoom. With reduced motion the replay, camera moves,
-confetti and ambient trains are off and trains sit at their stops. A text list of the standings is in the
-page for screen readers, and if WebGL is unavailable the map says so instead of showing a blank screen.
+**Live data:** the map polls `GET /race/riders` every 20 seconds (paused while the tab is hidden). Supabase
+Realtime isn't used because votes are private per user under RLS, so a client subscription could only see
+its own votes. **Demo mode:** `/race/map?demo=1` uses 13 made-up riders and has someone score every few
+seconds.
+
+**Performance and fallbacks:**
+- Quality starts at high on desktop (DPR ≤ 2, 2048 shadows, tilt-shift) and medium on phones (DPR ≤ 1.5,
+  1024 shadows). If the frame rate stays below 45 fps (high) or 28 fps (medium), it steps down, ending at
+  low (no shadows or post-processing). `?quality=high|medium|low` forces a level.
+- Rendering stops while the tab is hidden, and closing the map disposes every geometry, material and texture.
+- With reduced motion there's no glide, replay, fireworks or service trains, and trains sit at their stops.
+- No WebGL, a lost GPU context or a crash inside the scene shows the 2D line in the same overlay
+  (`Fallback2D`, behind `MapErrorBoundary`), never the page's error screen. A text list of the standings is
+  in the page for screen readers.
 
 ## Week 7 – Admin panel with more observability
 

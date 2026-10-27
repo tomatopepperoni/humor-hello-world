@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
 import { LiveScene, type LiveRider } from "./scene";
+import Fallback2D from "./Fallback2D";
 
 /**
  * Full-screen live map. The WebGL scene (scene.ts) draws and animates; this
@@ -30,6 +31,8 @@ const LABEL_CSS = `
 .lm-compact .lm-face { width: 22px; height: 22px; font-size: 9px; border-width: 2px; }
 .lm-compact .lm-name { display: none; }
 @keyframes lm-pulse { 50% { transform: scale(1.06); } }
+.lm-pop { font-size: 20px; font-weight: 900; color: #00933c; text-shadow: 0 0 4px #fff, 0 0 4px #fff, 0 0 6px #fff; animation: lm-rise 1.4s ease-out forwards; pointer-events: none; }
+@keyframes lm-rise { from { opacity: 0; translate: 0 8px; } 15% { opacity: 1; } to { opacity: 0; translate: 0 -34px; } }
 @media (prefers-reduced-motion: reduce) { .lm-hint { animation: none; } }
 `;
 
@@ -172,6 +175,7 @@ export default function LiveMap({
       onSelectStation: (k) => setSel({ kind: "station", k }),
       onArrive: (r) => setToast(`🎓 ${r.me ? "You" : r.name.split(" ")[0]} made it to Columbia!`),
       onCameraChange: setFollowing,
+      onFatal: () => alive && setFailed(true),
     })
       .then((s) => {
         if (!alive) return s.destroy();
@@ -287,13 +291,7 @@ export default function LiveMap({
           <p className="rounded-full bg-white px-4 py-2 text-sm font-semibold shadow">Laying the tracks…</p>
         </div>
       )}
-      {failed && (
-        <div className="absolute inset-0 flex items-center justify-center p-6">
-          <p className="max-w-sm rounded-2xl bg-white p-5 text-center text-[15px] shadow">
-            This browser couldn&apos;t start the live map (WebGL is off). The standings below the map on the Race page show the same thing.
-          </p>
-        </div>
-      )}
+      {failed && <Fallback2D riders={riders} onClose={onClose} />}
 
       {/* top bar */}
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 pt-[max(12px,env(safe-area-inset-top))] sm:p-4">
