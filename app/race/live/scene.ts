@@ -2,6 +2,15 @@ import * as THREE from "three";
 import CameraControls from "camera-controls";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { HorizontalTiltShiftShader } from "three/examples/jsm/shaders/HorizontalTiltShiftShader.js";
+import { VerticalTiltShiftShader } from "three/examples/jsm/shaders/VerticalTiltShiftShader.js";
+import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
+import { buildDiorama, distToLine, type Diorama } from "./diorama";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
 import { along, geo, type Geo, type Pt } from "./geo";
 
@@ -37,7 +46,7 @@ const COL = {
   sky: 0xcfeaf7,
   land: 0xf6ecd8,
   landSide: 0xe7d6b5,
-  far: 0xdfe6c9,
+  far: 0xcfe0bf,
   red: 0xee352e,
   white: 0xffffff,
   ink: 0x16181a,
@@ -122,6 +131,18 @@ export class LiveScene {
   private downAt: { x: number; y: number } | null = null;
   private trainGeo: { body: THREE.BufferGeometry; wheel: THREE.BufferGeometry; window: THREE.BufferGeometry; eye: THREE.BufferGeometry; smile: THREE.BufferGeometry };
   private mats: Record<string, THREE.Material> = {};
+  private dio!: Diorama;
+  private water!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+  private signMat!: THREE.MeshStandardMaterial;
+  private composer: EffectComposer | null = null;
+  private bloom: UnrealBloomPass | null = null;
+  private tiltH: ShaderPass | null = null;
+  private tiltV: ShaderPass | null = null;
+  private night = 0;
+  private lightCheck = -1;
+  /** high: desktop; medium: phones; low: no shadows or post-processing */
+  quality: "high" | "medium" | "low";
+  private forced: number | null = null;
 
   static async create(el: HTMLElement, riders: LiveRider[], ev: SceneEvents): Promise<LiveScene> {
     // Fail early (and let React show the fallback) when WebGL isn't there.
@@ -137,11 +158,15 @@ export class LiveScene {
     this.cx = this.g.width / 2;
     this.cz = this.g.height / 2;
     this.reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const coarse = window.matchMedia("(pointer: coarse)").matches || Math.min(window.innerWidth, window.innerHeight) < 600;
+    this.quality = coarse ? "medium" : "high";
+    const forced = new URLSearchParams(window.location.search).get("time");
+    this.forced = forced === "day" ? 13 : forced === "dusk" ? 17.6 : forced === "night" ? 23 : null;
 
     const w = host.clientWidth || 1;
     const h = host.clientHeight || 1;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2));
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Neutral tone mapping keeps the pastels pastel (ACES greys them out)
@@ -175,9 +200,14 @@ export class LiveScene {
 
     this.buildLights();
     this.buildGround();
+    this.dio = buildDiorama(this.g, (p, y) => this.v(p, y), (p) => distToLine(p, this.g.line.pts));
+    this.scene.add(this.dio.group);
     this.buildTrack();
+    this.setupPost(w, h);
+    this.applyLight();
     this.addServiceTrains();
     this.setRiders(riders, true);
+    this.applyLight(); // again, now that the train materials exist
 
     this.resizeObs = new ResizeObserver(() => this.resize());
     this.resizeObs.observe(host);
@@ -222,7 +252,7 @@ export class LiveScene {
     const s = this.sun;
     s.position.set(-900, 1600, 900);
     s.castShadow = true;
-    s.shadow.mapSize.set(2048, 2048);
+    s.shadow.mapSize.set(this.quality === "high" ? 2048 : 1024, this.quality === "high" ? 2048 : 1024);
     s.shadow.bias = -0.0004;
     s.shadow.normalBias = 1.5;
     const sc = s.shadow.camera;
@@ -248,17 +278,20 @@ export class LiveScene {
   private buildGround() {
     const g = this.g;
     // the river and harbour: one big plane under everything
-    const water = new THREE.Mesh(
+    const water = (this.water = new THREE.Mesh(
       new THREE.PlaneGeometry(g.width * 3, g.height * 3, 1, 1),
       new THREE.MeshStandardMaterial({ color: COL.water, roughness: 0.35, metalness: 0.05 })
-    );
+    ));
     water.rotation.x = -Math.PI / 2;
     water.position.y = -2;
     water.receiveShadow = true;
     this.scene.add(water);
 
-    this.scene.add(this.slab(g.nj, 6, 2, COL.far, 0xc9d2b0));
-    this.scene.add(this.slab(g.bk, 6, 2, COL.far, 0xc9d2b0));
+    for (const poly of [g.nj, g.bk]) {
+      const sl = this.slab(poly, 6, 2, COL.far, 0xc9d2b0);
+      this.farMats.push(...(sl.material as THREE.MeshStandardMaterial[]));
+      this.scene.add(sl);
+    }
     this.scene.add(this.slab(g.manhattan, SLAB, SLAB, COL.land, COL.landSide));
 
     // Central Park: a slightly raised green pad (trees come in the next phase)
@@ -317,7 +350,7 @@ export class LiveScene {
           return this.v({ x: p.x + (-(b.y - a.y) / l) * side, y: p.y + ((b.x - a.x) / l) * side }, DECK_Y + 1.2);
         })
       );
-      const rail = new THREE.Mesh(new THREE.TubeGeometry(curve, pts.length * 2, 2.6, 8, false), new THREE.MeshStandardMaterial({ color: COL.red, roughness: 0.5 }));
+      const rail = new THREE.Mesh(new THREE.TubeGeometry(curve, pts.length * 2, 2.6, 8, false), this.railMat);
       rail.castShadow = true;
       this.scene.add(rail);
     }
@@ -339,7 +372,7 @@ export class LiveScene {
     const edgeMat = new THREE.MeshStandardMaterial({ color: COL.yellow, roughness: 0.5 });
     const goldMat = new THREE.MeshStandardMaterial({ color: COL.yellow, roughness: 0.4, emissive: COL.yellow, emissiveIntensity: 0.3 });
     const postMat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6 });
-    const signMat = new THREE.MeshStandardMaterial({ color: COL.red, roughness: 0.4, emissive: COL.red, emissiveIntensity: 0.15 });
+    const signMat = (this.signMat = new THREE.MeshStandardMaterial({ color: COL.red, roughness: 0.4, emissive: COL.red, emissiveIntensity: 0.15 }));
     const platGeo = new RoundedBoxGeometry(64, 4, 11, 2, 1.5);
     const platBig = new RoundedBoxGeometry(84, 4, 13, 2, 1.5);
     const stripGeo = new THREE.BoxGeometry(62, 0.6, 1.6);
@@ -388,6 +421,87 @@ export class LiveScene {
       this.stationLabels.push({ obj, major });
     });
   }
+
+
+  private setupPost(w: number, h: number) {
+    if (this.quality === "low") return;
+    const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: this.quality === "high" ? 4 : 2 });
+    const comp = new EffectComposer(this.renderer, rt);
+    comp.setPixelRatio(this.renderer.getPixelRatio());
+    comp.setSize(w, h);
+    comp.addPass(new RenderPass(this.scene, this.camera));
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.3, 0.4, 1.0);
+    comp.addPass(this.bloom);
+    if (this.quality === "high") {
+      this.tiltH = new ShaderPass(HorizontalTiltShiftShader);
+      this.tiltV = new ShaderPass(VerticalTiltShiftShader);
+      this.tiltH.uniforms.r.value = this.tiltV.uniforms.r.value = 0.52;
+      comp.addPass(this.tiltH);
+      comp.addPass(this.tiltV);
+    }
+    const vig = new ShaderPass(VignetteShader);
+    vig.uniforms.offset.value = 1.05;
+    vig.uniforms.darkness.value = 0.55;
+    comp.addPass(vig);
+    comp.addPass(new OutputPass());
+    this.composer = comp;
+  }
+
+  /** New York hour as a decimal (or the ?time= override). */
+  private hourNY() {
+    if (this.forced !== null) return this.forced;
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(new Date());
+    const hh = Number(parts.find((p) => p.type === "hour")?.value ?? 12);
+    const mm = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+    return hh + mm / 60;
+  }
+
+  /** Sun, sky, water and night lights follow the time in New York. */
+  private applyLight() {
+    this.lightCheck = this.time;
+    const h = this.hourNY();
+    const phi = (Math.PI * (h - 6)) / 12; // 0 at 6am, π at 6pm
+    const elev = Math.sin(phi);
+    const night = clamp(0.5 - elev * 3, 0, 1);
+    const dusk = clamp(1 - Math.abs(elev - 0.12) * 5, 0, 1) * (1 - night);
+    this.night = night;
+
+    const mix = (a: number, b: number, k: number) => new THREE.Color(a).lerp(new THREE.Color(b), k);
+    const sky = mix(0xcfeaf7, 0xf3c4c8, dusk).lerp(new THREE.Color(0x172042), night);
+    (this.scene.background as THREE.Color).copy(sky);
+    (this.scene.fog as THREE.Fog).color.copy(sky);
+    this.water.material.color.copy(mix(0x8fd3f0, 0xb4c3ee, dusk).lerp(new THREE.Color(0x2a3b6b), night));
+
+    if (night < 1) {
+      this.sun.color.copy(mix(0xfff1dc, 0xffb48c, dusk));
+      this.sun.intensity = (2.1 - dusk * 0.5) * (1 - night) + 0.45 * night;
+      this.sunOffset.set(Math.cos(phi) * 1300, Math.max(260, Math.max(0, elev) * 1700), 800);
+    } else {
+      // moonlight
+      this.sun.color.setHex(0xaabaff);
+      this.sun.intensity = 0.5;
+      this.sunOffset.set(-700, 1500, 500);
+    }
+    this.hemi.color.copy(mix(0xe2f3ff, 0xeed6ff, dusk).lerp(new THREE.Color(0x4a5a9a), night));
+    this.hemi.groundColor.copy(mix(0xf4e4c6, 0xf3d6c8, dusk).lerp(new THREE.Color(0x1c2240), night));
+    this.hemi.intensity = 1.3 - night * 0.75;
+
+    this.signMat.emissiveIntensity = 0.15 + night * 1.6;
+    this.railMat.emissiveIntensity = night * 0.9; // the line glows at night
+    this.farMats.forEach((m, i) => m.color.copy(new THREE.Color(i % 2 ? 0xc9d2b0 : COL.far).lerp(new THREE.Color(0x343c55), night)));
+    (this.mats.lamp as THREE.MeshStandardMaterial | undefined)?.setValues({ emissiveIntensity: 1.2 + night * 2.5 });
+    (this.mats.glass as THREE.MeshStandardMaterial | undefined)?.setValues({ emissiveIntensity: night * 0.9 });
+    if (this.bloom) {
+      // only HDR (emissive) pixels bloom, so daylight colours stay crisp
+      this.bloom.strength = 0.3 + night * 0.35;
+      this.bloom.threshold = 1.0;
+      this.bloom.radius = 0.4;
+    }
+  }
+
+  private sunOffset = new THREE.Vector3(-900, 1600, 900);
+  private railMat = new THREE.MeshStandardMaterial({ color: COL.red, roughness: 0.5, emissive: COL.red, emissiveIntensity: 0 });
+  private farMats: THREE.MeshStandardMaterial[] = [];
 
   /* ------------------------------------------------------------------ trains */
 
@@ -696,6 +810,8 @@ export class LiveScene {
     const h = this.host.clientHeight || 1;
     this.renderer.setSize(w, h);
     this.labels.setSize(w, h);
+    this.composer?.setSize(w, h);
+    this.bloom?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -782,7 +898,7 @@ export class LiveScene {
     // keep the sun's shadow box around what the camera is looking at
     const tgt = this.controls.getTarget(new THREE.Vector3());
     this.sun.target.position.copy(tgt);
-    this.sun.position.set(tgt.x - 900, 1600, tgt.z + 900);
+    this.sun.position.copy(tgt).add(this.sunOffset);
     const sc = this.sun.shadow.camera;
     const half = clamp(dist * 0.55, 300, 2400);
     if (Math.abs(sc.right - half) > 40) {
@@ -794,7 +910,17 @@ export class LiveScene {
     }
 
     this.controls.update(Math.min(raw, 0.25));
-    this.renderer.render(this.scene, this.camera);
+    if (this.time - this.lightCheck > 5) this.applyLight();
+    this.dio.update(this.time, this.night, motion);
+    if (this.tiltH && this.tiltV) {
+      // miniature look: a little blur at the top and bottom, only when close
+      const k = clamp((1800 - dist) / 1200, 0, 1);
+      this.tiltH.enabled = this.tiltV.enabled = k > 0.02;
+      this.tiltH.uniforms.h.value = (1.3 * k) / this.host.clientWidth;
+      this.tiltV.uniforms.v.value = (1.3 * k) / this.host.clientHeight;
+    }
+    if (this.composer) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);
   }
 
@@ -838,6 +964,7 @@ export class LiveScene {
         if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
         else mat?.dispose();
       });
+      this.composer?.dispose();
       this.renderer.dispose();
       this.renderer.domElement.remove();
       this.labels.domElement.remove();

@@ -280,7 +280,7 @@ export default function LiveMap({
       aria-label="Race to Columbia live map"
     >
       <style>{LABEL_CSS}</style>
-      <div ref={hostRef} className="absolute inset-0" role="application" aria-label="Map. Drag to move, scroll or pinch to zoom, tap a train for details." />
+      <div ref={hostRef} className="absolute inset-0 z-0 isolate" role="application" aria-label="Map. Drag to move, scroll or pinch to zoom, tap a train for details." />
 
       {!ready && !failed && (
         <div className="absolute inset-0 flex items-center justify-center">
