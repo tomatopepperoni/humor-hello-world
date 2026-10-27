@@ -5,7 +5,8 @@ import { BadgeLegend, BadgeRow, ProgressLine, ordinal, riderStatus } from "@/app
 import { LineBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
 import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
-import SubwayMap, { type MapRider } from "./SubwayMap";
+import type { MapRider } from "./SubwayMap";
+import RaceMapCard from "./RaceMapCard";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Race to Columbia" };
@@ -16,7 +17,8 @@ const RULES = [
   { pts: "+1", what: "for every upvote someone else gives your captions" },
 ];
 
-export default async function RacePage() {
+export default async function RacePage({ searchParams }: PageProps<"/race">) {
+  const { map } = await searchParams;
   const [{ user }, race] = await Promise.all([getCurrentProfile(), getRace()]);
   const meId = user?.id ?? null;
   const me = race.riders.find((r) => r.user_id === meId);
@@ -111,9 +113,9 @@ export default async function RacePage() {
           <h2 id="map" className="text-xl font-bold tracking-tight">
             The 1 line right now
           </h2>
-          <p className="text-sm text-muted">{me ? "The red train is you." : "Everyone on the line this week."}</p>
+          <p className="text-sm text-muted">{me ? "The red train is you. Tap the map to open it full screen." : "Tap the map to open it full screen."}</p>
         </div>
-        <SubwayMap riders={mapRiders} />
+        <RaceMapCard riders={mapRiders} startOpen={map === "live"} />
         {!race.exact && (
           <p className="mt-2 text-xs text-muted">
             Estimated from posts and upvotes. Run supabase/week5.sql to count votes too.

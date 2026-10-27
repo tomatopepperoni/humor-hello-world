@@ -66,6 +66,44 @@ cp .env.example .env.local   # fill in the two Supabase values + GEMINI_API_KEY
 npm run dev
 ```
 
+## Race to Columbia – live map
+
+The race has two levels, so the race page stays simple and the detail is one tap away.
+
+1. **Preview card** (`app/race/SubwayMap.tsx`, SVG): the 1 train drawn as a toy track that snakes uptown,
+   six landmark stops, other riders as avatar pins, and your smiling red train riding to your stop. Two grey
+   1 trains run up and down the whole time, so the card never looks frozen (with 0 points your train waits at
+   South Ferry with a "vote to leave" bubble; with reduced motion it gently pulses instead of moving).
+2. **Live map** (`app/race/live/`, PixiJS v8 + pixi-viewport, WebGL): tap the card or "Open live map". The card
+   grows into a full-screen view (View Transitions API), and the code is loaded only then (`next/dynamic`,
+   prefetched when the page is idle). It is also its own page at `/race/map`, and `/race?map=live` deep-links
+   into it; the back button closes it.
+
+**What's on the live map:** Manhattan drawn from real coordinates, turned 29° so the grid runs straight up;
+pastel city blocks with a few taller buildings, Central Park with the Reservoir and swaying trees, water
+shimmer, the Staten Island ferry, Statue of Liberty, One WTC, Empire State, Times Square billboards and Low
+Library at Columbia. The 1 line is a smooth spline through the real stations. Every rider is a train with
+their photo bubble; yours is yellow. On open, the week replays: everyone leaves South Ferry and rides to
+where they are now. Three grey service trains stop at every station. Drifting clouds (with parallax),
+sparks on curves, a ripple when a train arrives, "+1" pops when someone scores, confetti at Columbia. The
+lighting follows New York time (day, dusk, night with lit windows).
+
+**Controls:** drag, pinch or scroll to move and zoom. Buttons: Find my train (flies to you and follows),
+Whole line, Replay the week, zoom in/out, sound (off by default). Tap a train for its rider card, tap a
+station to see who's there. Keyboard: arrows pan, `+`/`-` zoom, `F` finds you, `Esc` closes.
+
+**Live data:** the map polls `GET /race/riders` every 20 seconds (paused while the tab is hidden) and moves
+the trains that scored. Supabase Realtime isn't used because votes are private per user under RLS, so a
+client subscription could only ever see its own votes.
+
+**Demo mode:** `/race/map?demo=1` uses 13 made-up riders and has someone score every few seconds, so the map
+can be tried without data. Add `&time=day|dusk|night` to force the lighting.
+
+**Performance and accessibility:** pixel ratio is capped at 2, the ticker stops when the tab is hidden, and
+labels and avatars stay the same size on screen at every zoom. With reduced motion the replay, camera moves,
+confetti and ambient trains are off and trains sit at their stops. A text list of the standings is in the
+page for screen readers, and if WebGL is unavailable the map says so instead of showing a blank screen.
+
 ## Week 7 – Admin panel with more observability
 
 The admin area (repo `humor-admin`) got pages for prompt chains, the chain mix, terms, generation examples,

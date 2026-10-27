@@ -98,11 +98,11 @@ function initials(name: string) {
 }
 
 /** Rounded, smiling 1 train, drawn facing right with its centre on the track. */
-function Train() {
+function Train({ body = "#ee352e" }: { body?: string }) {
   return (
     <g className="cm-bob">
       <rect x={-30} y={-27} width={10} height={5} rx={2} fill="#fccc0a" stroke="#16181a" strokeWidth={1.5} />
-      <rect x={-34} y={-23} width={66} height={30} rx={13} fill="#ee352e" stroke="#16181a" strokeWidth={2.5} />
+      <rect x={-34} y={-23} width={66} height={30} rx={13} fill={body} stroke="#16181a" strokeWidth={2.5} />
       <rect x={-27} y={-17} width={13} height={11} rx={3.5} fill="#dff3ff" stroke="#16181a" strokeWidth={1.6} />
       <rect x={-10} y={-17} width={13} height={11} rx={3.5} fill="#dff3ff" stroke="#16181a" strokeWidth={1.6} />
       {/* face */}
@@ -181,6 +181,8 @@ function Cloud({ x, y, s = 1, delay = 0 }: { x: number; y: number; s?: number; d
 function MapSvg({ L, riders, className }: { L: Layout; riders: MapRider[]; className: string }) {
   const g = useMemo(() => geometry(L), [L]);
   const trainRef = useRef<SVGGElement>(null);
+  // two other 1 trains that run up and down the line all the time, so the map is never still
+  const ambientRefs = useRef<(SVGGElement | null)[]>([]);
   const bubbleRef = useRef<SVGGElement>(null);
   const bubbleText = useRef<SVGTextElement>(null);
   const bubbleBox = useRef<SVGRectElement>(null);
@@ -228,13 +230,17 @@ function MapSvg({ L, riders, className }: { L: Layout; riders: MapRider[]; class
     }
 
     const sEnd = g.stationS[target];
-    const place = (s: number, moving: boolean) => {
+    const put = (el: SVGGElement, s: number, scale = 1) => {
       const p = g.at(s);
       let ang = (Math.atan2(p.dy, p.dx) * 180) / Math.PI;
       // Never upside down: on rows going left, mirror instead of rotating.
       const flip = p.dx < -0.001;
       if (flip) ang -= 180;
-      train.setAttribute("transform", `translate(${p.x} ${p.y}) rotate(${ang}) scale(${flip ? -1 : 1} 1)`);
+      el.setAttribute("transform", `translate(${p.x} ${p.y}) rotate(${ang}) scale(${(flip ? -1 : 1) * scale} ${scale})`);
+      return p;
+    };
+    const place = (s: number, moving: boolean) => {
+      const p = put(train, s);
       train.dataset.moving = moving ? "true" : "false";
       // Keep the bubble inside the map.
       const bx = Math.max(110, Math.min(L.w - 110, p.x));
@@ -242,9 +248,13 @@ function MapSvg({ L, riders, className }: { L: Layout; riders: MapRider[]; class
     };
 
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce || target === 0) {
+    const ambient = ambientRefs.current.filter((x): x is SVGGElement => !!x);
+    if (reduce) {
+      // No travelling, but the train still breathes (CSS pulse) so it never looks broken.
       place(sEnd, false);
+      train.classList.add("cm-pulse");
       bubble.style.opacity = "1";
+      ambient.forEach((el, i) => put(el, g.stationS[i === 0 ? 6 : 17], 0.78));
       return;
     }
 
@@ -254,7 +264,21 @@ function MapSvg({ L, riders, className }: { L: Layout; riders: MapRider[]; class
     let raf = 0;
     const t0 = performance.now();
     const tick = (now: number) => {
-      const el = ((now - t0) / 1000) % cycle;
+      const sec = (now - t0) / 1000;
+      ambient.forEach((el, i) => {
+        const u = (sec / (34 + i * 9) + i * 0.47) % 1;
+        const there = u < 0.5 ? u * 2 : 2 - u * 2; // up the line, then back down
+        put(el, ease(there) * g.total, 0.78);
+        el.dataset.moving = "true";
+      });
+      if (target === 0) {
+        // You haven't scored yet: wait at South Ferry, bouncing, with the hint showing.
+        place(sEnd, false);
+        bubble.style.opacity = "1";
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const el = sec % cycle;
       if (el < ride) {
         place(ease(el / ride) * sEnd, true);
         bubble.style.opacity = "0";
@@ -380,6 +404,21 @@ function MapSvg({ L, riders, className }: { L: Layout; riders: MapRider[]; class
         </g>
       ))}
 
+      {/* other 1 trains */}
+      {[0, 1].map((i) => (
+        <g
+          key={i}
+          ref={(el) => {
+            ambientRefs.current[i] = el;
+          }}
+          className="cm-train"
+          opacity={0.92}
+          transform={`translate(${sf.x} ${sf.y})`}
+        >
+          <Train body="#dfe5ea" />
+        </g>
+      ))}
+
       {/* you */}
       <g ref={trainRef} className="cm-train" transform={`translate(${sf.x} ${sf.y})`}>
         <Train />
@@ -408,6 +447,8 @@ export default function SubwayMap({ riders }: { riders: MapRider[] }) {
         @keyframes cm-spin { to { transform: rotate(360deg); } }
         @keyframes cm-bob { from { transform: translateY(0); } to { transform: translateY(-1.6px); } }
         @keyframes cm-drift { from { transform: translateX(-14px); } to { transform: translateX(18px); } }
+        .cm-pulse { animation: cm-pulse 2.4s ease-in-out infinite; }
+        @keyframes cm-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
         @media (prefers-reduced-motion: reduce) { .cm-wheel, .cm-bob, .cm-cloud { animation: none; } }
       `}</style>
       <MapSvg L={WIDE} riders={riders} className="hidden h-auto w-full sm:block" />
