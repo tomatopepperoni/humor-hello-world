@@ -933,7 +933,20 @@ export class LiveScene {
     this.destroyed = true;
     document.removeEventListener("visibilitychange", this.onVisibility);
     this.audio?.close().catch(() => {});
-    this.app.destroy(true, { children: true, texture: true });
+    // The viewport has to go first: app.destroy() kills the ticker, and the
+    // viewport's own destroy then crashes trying to unsubscribe from it.
+    try {
+      this.app.ticker.stop();
+      this.app.stage.removeChild(this.vp);
+      this.vp.destroy({ children: true });
+    } catch {
+      /* already gone */
+    }
+    try {
+      this.app.destroy(true, { children: true, texture: true });
+    } catch {
+      /* never let cleanup take the page down */
+    }
   }
 }
 
