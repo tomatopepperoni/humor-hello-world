@@ -29,6 +29,10 @@ const LABEL_CSS = `
 .lm-name { font-size: 12px; font-weight: 800; color: #16181a; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
 .lm-hint { font-size: 12px; font-weight: 800; color: #fff; background: #16181a; border-radius: 999px; padding: 3px 10px; margin-bottom: 2px; animation: lm-pulse 1.6s ease-in-out infinite; }
 .lm-compact .lm-face { width: 22px; height: 22px; font-size: 9px; border-width: 2px; }
+.lm-selected { transform: none; z-index: 10; }
+.lm-selected .lm-face { width: 76px; height: 76px; font-size: 24px; border-width: 4px; border-color: #fccc0a; outline-width: 3px; box-shadow: 0 8px 22px rgba(0,0,0,.3); }
+.lm-selected .lm-name { font-size: 15px; }
+.lm-face { transition: width .2s ease, height .2s ease; }
 .lm-compact .lm-name { display: none; }
 @keyframes lm-pulse { 50% { transform: scale(1.06); } }
 .lm-pop { font-size: 20px; font-weight: 900; color: #00933c; text-shadow: 0 0 4px #fff, 0 0 4px #fff, 0 0 6px #fff; animation: lm-rise 1.4s ease-out forwards; pointer-events: none; }
@@ -193,6 +197,11 @@ export default function LiveMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Closing the rider card shrinks that rider's photo back down on the map.
+  useEffect(() => {
+    if (sel?.kind !== "rider") sceneRef.current?.select(null);
+  }, [sel]);
+
   // New data → the scene moves the trains that scored.
   useEffect(() => {
     if (ready) sceneRef.current?.setRiders(riders);
@@ -339,7 +348,7 @@ export default function LiveMap({
           </button>
           {selRider ? (
             <div className="flex items-center gap-3 pr-6">
-              <Face r={selRider} size={48} />
+              <Face r={selRider} size={72} />
               <div className="min-w-0">
                 <p className="truncate text-[17px] font-bold">{selRider.me ? "You" : selRider.name}</p>
                 <p className="text-sm text-muted">
@@ -363,7 +372,7 @@ export default function LiveMap({
                 <ul className="mt-3 flex flex-wrap gap-2">
                   {atStation.map((r) => (
                     <li key={r.id}>
-                      <button type="button" onClick={() => { setSel({ kind: "rider", id: r.id }); sceneRef.current?.flyToRider(r.id); }} className="flex items-center gap-1.5 rounded-full border bg-paper py-1 pl-1 pr-3 text-sm font-semibold hover:border-ink/40">
+                      <button type="button" onClick={() => { sceneRef.current?.select(r.id); sceneRef.current?.flyToRider(r.id); }} className="flex items-center gap-1.5 rounded-full border bg-paper py-1 pl-1 pr-3 text-sm font-semibold hover:border-ink/40">
                         <Face r={r} size={24} />
                         {r.me ? "You" : r.name.split(" ")[0]}
                       </button>
