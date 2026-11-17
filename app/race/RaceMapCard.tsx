@@ -86,14 +86,14 @@ export default function RaceMapCard({ riders, startOpen = false }: { riders: Map
         <button
           type="button"
           onClick={show}
-          className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-sign px-3.5 py-2 text-sm font-semibold text-white shadow-lg transition-transform group-hover:scale-105"
+          className="glow-cta absolute right-3 top-3 flex items-center gap-2 rounded-full border-2 border-metro bg-sign px-4 py-2.5 text-[15px] font-bold text-white transition-transform group-hover:scale-105"
         >
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#ff5a52] opacity-75 motion-reduce:animate-none" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-[#ff5a52]" />
           </span>
           Open live map
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fccc0a" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
           </svg>
         </button>

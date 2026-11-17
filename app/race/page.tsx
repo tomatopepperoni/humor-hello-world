@@ -17,6 +17,13 @@ const RULES = [
   { pts: "+1", what: "for every upvote someone else gives your captions" },
 ];
 
+/** What the map is for, in the order it happens. */
+const MAP_STEPS = [
+  { title: "Vote or post", body: "Rate a caption in the feed, or post your own moment." },
+  { title: "Your train moves", body: "Each point is one stop uptown on the 1 line." },
+  { title: "Reach Columbia", body: "First to 116 St wins the week. Everyone restarts Monday." },
+];
+
 export default async function RacePage({ searchParams }: PageProps<"/race">) {
   const { map } = await searchParams;
   const [{ user }, race] = await Promise.all([getCurrentProfile(), getRace()]);
@@ -109,12 +116,24 @@ export default async function RacePage({ searchParams }: PageProps<"/race">) {
       )}
 
       <section aria-labelledby="map" className="mt-8">
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="map" className="text-xl font-bold tracking-tight">
-            The 1 line right now
-          </h2>
-          <p className="text-sm text-muted">{me ? "The red train is you. Tap the map to open it full screen." : "Tap the map to open it full screen."}</p>
-        </div>
+        <h2 id="map" className="text-xl font-bold tracking-tight">
+          The race map: this week&apos;s scoreboard
+        </h2>
+        <p className="mt-1 max-w-3xl text-[15px] text-ink/80">
+          Every train is one person. The further uptown a train is, the more that person voted and posted this week.
+          {me ? " The red train is you." : " Sign in and the red train is you."}
+        </p>
+        <ol className="mb-4 mt-3 grid gap-2 sm:grid-cols-3">
+          {MAP_STEPS.map((step, i) => (
+            <li key={step.title} className="flex items-start gap-2.5 rounded-xl border bg-card px-3 py-2.5">
+              <LineBullet letter={i + 1} bg={i === 2 ? "#fccc0a" : "#ee352e"} fg={i === 2 ? "#16181a" : "#ffffff"} size={24} />
+              <span className="min-w-0">
+                <span className="block text-[15px] font-semibold leading-tight">{step.title}</span>
+                <span className="block text-sm text-muted">{step.body}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
         <RaceMapCard riders={mapRiders} startOpen={map === "live"} />
         {!race.exact && (
           <p className="mt-2 text-xs text-muted">

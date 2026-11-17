@@ -131,6 +131,29 @@
   animation: led-in 0.45s ease-out both;
 }
 
+/* "Open live map": a MetroCard-yellow glow that breathes, so the button reads as the way in. */
+@keyframes glow-cta {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgb(252 204 10 / 0.75),
+      0 0 14px 2px rgb(252 204 10 / 0.55),
+      0 6px 16px -6px rgb(0 0 0 / 0.5);
+  }
+  60% {
+    box-shadow:
+      0 0 0 12px rgb(252 204 10 / 0),
+      0 0 26px 7px rgb(252 204 10 / 0.8),
+      0 6px 16px -6px rgb(0 0 0 / 0.5);
+  }
+}
+.glow-cta {
+  box-shadow:
+    0 0 16px 3px rgb(252 204 10 / 0.65),
+    0 6px 16px -6px rgb(0 0 0 / 0.5);
+  animation: glow-cta 2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

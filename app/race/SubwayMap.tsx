@@ -462,7 +462,8 @@ export default function SubwayMap({ riders }: { riders: MapRider[] }) {
           <span aria-hidden="true" className="inline-block h-3.5 w-3.5 rounded-full border-2 border-ink bg-[#e9e3ff]" />
           Other riders
         </span>
-        <span>Every vote = 1 stop uptown</span>
+        <span>1 vote = 1 stop uptown</span>
+        <span className="font-semibold text-ink sm:ml-auto">Tap the map to watch the race live in 3D</span>
       </div>
     </div>
   );
