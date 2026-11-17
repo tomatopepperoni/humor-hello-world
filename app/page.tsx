@@ -3,10 +3,13 @@ import MemeCard from "@/app/components/MemeCard";
 import { LineBullet } from "@/app/components/LineBullet";
 import NextThemeClock from "@/app/components/NextThemeClock";
 import { RaceMini } from "@/app/components/Race";
+import VoiceFilter from "@/app/components/VoiceFilter";
+import { PulseCard } from "@/app/components/WeekPulse";
 import { getCurrentProfile } from "@/lib/profile";
 import { getRecentMemes, getTopMemesToday, type Meme, type PostWithCaptions } from "@/lib/posts";
+import { getWeekPulse, type WeekPulse } from "@/lib/pulse";
 import { getRace, type Race } from "@/lib/race";
-import { startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
+import { isVibe, startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
 
@@ -59,13 +62,20 @@ export default async function Home() {
   let memes: Meme[] = [];
   let top: Meme[] = [];
   let race: Race | null = null;
+  let pulse: WeekPulse | null = null;
   let loadError: string | null = null;
   try {
-    const [r, t, rc] = await Promise.all([getRecentMemes(12), getTopMemesToday(4), getRace().catch(() => null)]);
+    const [r, t, rc, pl] = await Promise.all([
+      getRecentMemes(12),
+      getTopMemesToday(4),
+      getRace().catch(() => null),
+      getWeekPulse().catch(() => null),
+    ]);
     recent = r.posts;
     memes = r.memes;
     top = t;
     race = rc;
+    pulse = pl;
   } catch (e) {
     loadError = e instanceof Error ? e.message : "unknown error";
   }
@@ -167,18 +177,22 @@ export default async function Home() {
                 </Link>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                {memes.map((m) => (
-                  <MemeCard key={m.caption.id} meme={m} loggedIn={loggedIn} />
-                ))}
-              </div>
+              <VoiceFilter
+                gridClassName="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3"
+                items={memes.map((m) => ({
+                  id: m.caption.id,
+                  vibe: m.caption.vibe ?? (isVibe(m.post.vibe) ? m.post.vibe : null),
+                  node: <MemeCard meme={m} loggedIn={loggedIn} />,
+                }))}
+              />
             )}
           </section>
         </div>
 
-        {/* One small side card. On phones it sits after the feed. */}
-        <aside className="lg:sticky lg:top-20 lg:self-start">
+        {/* Two small side cards. On phones they sit after the feed. */}
+        <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
           {race && <RaceMini riders={race.riders} meId={user?.id ?? null} />}
+          {pulse && <PulseCard pulse={pulse} />}
         </aside>
       </div>
     </main>

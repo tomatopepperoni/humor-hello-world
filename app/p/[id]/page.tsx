@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import MemeCard from "@/app/components/MemeCard";
 import PostCard, { displayName } from "@/app/components/PostCard";
 import { ShareButton } from "@/app/components/CopyButton";
 import OwnerTools from "./OwnerTools";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { getVoiceMix } from "@/lib/voices";
-import { getPost } from "@/lib/posts";
+import { getPost, getRecentPosts, toMemes, type Meme } from "@/lib/posts";
 import { DEFAULT_VIBE, VIBE_KEYS, isVibe } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,12 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
 
   const mine = user?.id === post.user_id;
   const top = post.captions.find((c) => c.id === post.leading_caption_id) ?? post.captions[0];
+
+  // Somewhere to go next: one meme from each of the latest other posts, ones the viewer hasn't voted on first.
+  const others = (await getRecentPosts(9).catch(() => [])).filter((p) => p.id !== post.id && p.captions.length > 0);
+  const more: Meme[] = [...others.filter((p) => !p.voted_by_me), ...others.filter((p) => p.voted_by_me)]
+    .slice(0, 4)
+    .map((p) => toMemes(p).sort((a, b) => b.caption.score - a.caption.score || a.caption.position - b.caption.position)[0]);
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
@@ -106,6 +113,24 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
             Got your own moment from this week? Post it
           </Link>
         </div>
+      )}
+
+      {more.length > 0 && (
+        <section aria-labelledby="more-title" className="mt-12 border-t pt-8">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 id="more-title" className="text-xl font-bold tracking-tight">
+              {user ? "More memes to vote on" : "More from the feed"}
+            </h2>
+            <Link href="/#fresh" className="text-sm font-medium text-bullet-blue hover:underline">
+              See the whole feed
+            </Link>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {more.map((m) => (
+              <MemeCard key={m.caption.id} meme={m} loggedIn={!!user} />
+            ))}
+          </div>
+        </section>
       )}
     </main>
   );

@@ -14,6 +14,7 @@ them up or down; the best themed post of the day tops the board.
 | 3 | Google login (Supabase Auth), `profiles` table + trigger, onboarding, `/profile` with photo upload, protected `/jokes` route |
 | 4 | AI caption generation (Gemini) saved to `posts` / `captions` with the exact prompt, up/down **votes** table, daily theme + leaderboard, **RLS on every table** |
 | 5 | Feedback iteration: complete captions (parser fix), one meme card per caption in a responsive grid, five subway-voice caption styles, up/down counts read back from the DB, Race to Columbia map + badges, daily Gemini limit, prompts hidden from the API, subway-sign redesign |
+| 11 | Richer browsing: filter the feed by subway voice, "This week on the line" numbers on the home page, voice standings and this week's riders on the leaderboard, more memes to vote on under every post |
 
 ## Design concept: the city's own wayfinding
 

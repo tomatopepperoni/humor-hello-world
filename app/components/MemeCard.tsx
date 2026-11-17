@@ -36,15 +36,15 @@ export default function MemeCard({ meme, loggedIn, rank }: { meme: Meme; loggedI
   const href = `/p/${post.id}#c-${caption.id}`;
 
   return (
-    <article className="flex flex-col overflow-hidden rounded-2xl border bg-card">
-      <Link href={href} className="relative block" aria-label={`Open the post: ${caption.text}`}>
+    <article className="group flex flex-col overflow-hidden rounded-2xl border bg-card transition-shadow duration-200 hover:shadow-[0_10px_28px_-14px_rgb(0_0_0/0.4)]">
+      <Link href={href} className="relative block overflow-hidden" aria-label={`Open the post: ${caption.text}`}>
         {post.image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={post.image_url}
             alt={post.context ?? "Photo from the post"}
             loading="lazy"
-            className="aspect-[4/3] w-full bg-ink/5 object-cover sm:aspect-square"
+            className="aspect-[4/3] w-full bg-ink/5 object-cover transition-transform duration-300 group-hover:scale-[1.03] sm:aspect-square"
           />
         ) : (
           <SignVisual text={post.context ?? ""} className="aspect-[4/3] sm:aspect-square" />
