@@ -303,10 +303,10 @@ export default function CreateForm({
 
         {/* Theme */}
         <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-sign p-4 text-white">
-          <input type="checkbox" name="use_theme" defaultChecked className="mt-1 h-4 w-4 accent-metro" />
+          <input type="checkbox" name="use_theme" className="mt-1 h-4 w-4 accent-metro" />
           <span>
             <span className="block font-semibold">Enter today&apos;s theme: {theme}</span>
-            <span className="mt-0.5 block text-sm text-white/70">Themed posts compete for Top today. Untick it for anything else.</span>
+            <span className="mt-0.5 block text-sm text-white/70">Tick this only if your post fits the theme. Any other moment is welcome too.</span>
           </span>
         </label>
       </fieldset>

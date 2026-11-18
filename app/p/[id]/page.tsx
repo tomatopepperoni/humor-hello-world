@@ -3,12 +3,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import MemeCard from "@/app/components/MemeCard";
 import PostCard, { displayName } from "@/app/components/PostCard";
+import AnnounceButton from "@/app/components/AnnounceButton";
 import { ShareButton } from "@/app/components/CopyButton";
 import OwnerTools from "./OwnerTools";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { getVoiceMix } from "@/lib/voices";
 import { getPost, getRecentPosts, toMemes, type Meme } from "@/lib/posts";
+import { announcementFor } from "@/lib/announce";
 import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
 import { DEFAULT_VIBE, VIBE_KEYS, isVibe } from "@/lib/vibes";
 
@@ -85,14 +87,24 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
               </Link>
             </p>
           )}
-          <ShareButton
-            url={`/p/${post.id}`}
-            title="Captioned NYC"
-            text="Which caption is funniest? Vote here"
-            className="mt-3 rounded-full bg-metro px-4 py-2 text-sm font-semibold text-ink hover:bg-metro-deep"
-          >
-            Send to friends
-          </ShareButton>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <ShareButton
+              url={`/p/${post.id}`}
+              title="Captioned NYC"
+              text="Which caption is funniest? Vote here"
+              className="rounded-full bg-metro px-4 py-2 text-sm font-semibold text-ink hover:bg-metro-deep"
+            >
+              Send to friends
+            </ShareButton>
+            {rider && (
+              <AnnounceButton
+                auto
+                text={announcementFor(rider.station)}
+                label="Hear your next stop"
+                className="border-white/40 text-white hover:border-white"
+              />
+            )}
+          </div>
         </div>
       )}
 

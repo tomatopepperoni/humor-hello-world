@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import AnnounceButton from "@/app/components/AnnounceButton";
 import { Avatar, displayName } from "@/app/components/PostCard";
 import { BadgeLegend, BadgeRow, ProgressLine, ordinal, riderStatus } from "@/app/components/Race";
 import { LineBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
+import { announcementFor } from "@/lib/announce";
 import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
 import type { MapRider } from "./SubwayMap";
 import RaceMapCard from "./RaceMapCard";
@@ -97,6 +99,11 @@ export default async function RacePage({ searchParams }: PageProps<"/race">) {
             <Link href="/create" className="rounded-full border bg-white px-4 py-2 text-sm font-semibold hover:border-ink/40">
               Post a moment
             </Link>
+            <AnnounceButton
+              text={announcementFor(me.station)}
+              label="Hear your next stop"
+              className="bg-white hover:border-ink/40"
+            />
           </div>
           <p className="mt-3 text-sm text-muted">
             This week: {me.votes_week} {me.votes_week === 1 ? "vote" : "votes"}, {me.posts_week}{" "}

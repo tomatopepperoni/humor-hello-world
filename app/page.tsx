@@ -141,7 +141,8 @@ export default async function Home() {
               : "Post a photo from your week in the city. AI writes funny captions for it in a subway voice, like a conductor announcement or a roast. Everyone votes, and each vote moves you one stop toward Columbia on the 1 train."}
           </p>
           {!loggedIn && <ExampleCaption />}
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {/* On a phone a new visitor gets the explanation, then the feed: the tab bar already has these three. */}
+          <div className={`mt-5 gap-3 sm:grid sm:grid-cols-3 ${loggedIn ? "grid" : "hidden"}`}>
             <ActionTile n={1} title="Browse" body="See today's memes from campus." href={topPosts.length ? "#top-today" : "#fresh"} />
             <ActionTile
               n={2}
@@ -202,7 +203,7 @@ export default async function Home() {
           )}
 
           <section id="fresh" aria-labelledby="fresh-title" className="scroll-mt-20">
-            <div className="mb-3 flex items-baseline justify-between gap-3">
+            <div className="mb-3 flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
               <h2 id="fresh-title" className="text-xl font-bold tracking-tight">
                 Fresh memes
               </h2>
