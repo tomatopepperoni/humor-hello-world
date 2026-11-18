@@ -1,6 +1,6 @@
 import Link from "next/link";
 import MemeCard from "@/app/components/MemeCard";
-import { LineBullet } from "@/app/components/LineBullet";
+import { LineBullet, VibeBullet } from "@/app/components/LineBullet";
 import NextThemeClock from "@/app/components/NextThemeClock";
 import { RaceMini } from "@/app/components/Race";
 import VoiceFilter from "@/app/components/VoiceFilter";
@@ -9,7 +9,7 @@ import { getCurrentProfile } from "@/lib/profile";
 import { getRecentMemes, getTopMemesToday, type Meme, type PostWithCaptions } from "@/lib/posts";
 import { getWeekPulse, type WeekPulse } from "@/lib/pulse";
 import { getRace, type Race } from "@/lib/race";
-import { isVibe, startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
+import { VIBES, isVibe, startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +48,30 @@ function ActionTile({
         <span className={`mt-0.5 block text-sm leading-snug ${primary ? "text-ink/80" : "text-muted"}`}>{body}</span>
       </span>
     </Link>
+  );
+}
+
+/**
+ * Shown to visitors who aren't signed in (week 11 feedback: a new visitor
+ * couldn't tell what kind of site this is). One real input and one real output.
+ */
+function ExampleCaption() {
+  return (
+    <figure className="mt-4 max-w-xl rounded-xl border bg-white p-3.5">
+      <figcaption className="text-xs font-semibold text-muted">Example</figcaption>
+      <p className="mt-1.5 text-sm text-ink/75">Someone posts: &ldquo;Waited 45 minutes in line for a cookie.&rdquo;</p>
+      <div className="mt-2 flex items-start gap-2.5">
+        <span className="mt-0.5 shrink-0">
+          <VibeBullet vibe="roast" size={24} />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[15px] font-semibold leading-snug">{VIBES.roast.sample}</span>
+          <span className="block text-[13px] text-muted">
+            The AI&apos;s caption in the &ldquo;Roast me&rdquo; voice. Everyone votes ▲ or ▼ on it.
+          </span>
+        </span>
+      </div>
+    </figure>
   );
 }
 
@@ -93,12 +117,20 @@ export default async function Home() {
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         {/* What this is + the three actions */}
         <div className="rounded-xl border bg-card p-5 sm:p-6">
+          {!loggedIn && (
+            <p className="mb-2 text-sm font-semibold text-bullet-red">
+              New here? Captioned NYC is a caption game for Columbia students.
+            </p>
+          )}
           <h1 className="text-[26px] font-bold leading-[1.1] tracking-tight text-balance sm:text-[34px]">
             Your week in New York, captioned by the subway.
           </h1>
           <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-ink/75">
-            Post a photo, Gemini turns it into memes, and everyone votes on the funniest one.
+            {loggedIn
+              ? "Post a photo, Gemini turns it into memes, and everyone votes on the funniest one."
+              : "Post a photo from your week in the city. AI writes funny captions for it in a subway voice, like a conductor announcement or a roast. Everyone votes, and each vote moves you one stop toward Columbia on the 1 train."}
           </p>
+          {!loggedIn && <ExampleCaption />}
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <ActionTile n={1} title="Browse" body="See today's memes from campus." href={top.length ? "#top-today" : "#fresh"} />
             <ActionTile
