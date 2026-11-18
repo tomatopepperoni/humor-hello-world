@@ -16,7 +16,6 @@ export default async function Header() {
   return (
     <HeaderShell>
       <div className="mx-auto max-w-7xl px-4 sm:px-6">
-        <div className="h-px bg-white/70" />
         <nav className="flex items-center justify-between gap-2 py-2.5" aria-label="Site">
           <Link href="/" className="flex items-center gap-2 rounded-md pr-1 text-[17px] font-bold tracking-tight">
             <span

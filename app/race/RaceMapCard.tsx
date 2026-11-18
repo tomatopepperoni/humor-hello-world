@@ -79,24 +79,27 @@ export default function RaceMapCard({ riders, startOpen = false }: { riders: Map
         ::view-transition-old(race-map), ::view-transition-new(race-map) { height: 100%; object-fit: cover; }
       `}</style>
       <div className="group relative" style={open ? undefined : { viewTransitionName: "race-map" }}>
-        {/* the whole card opens the map; the button below is the keyboard/screen-reader way in */}
+        {/* The button sits in its own row above the map, so it never covers the Columbia end of the line. */}
+        <div className="mb-3 flex justify-end">
+          <button
+            type="button"
+            onClick={show}
+            className="glow-cta flex items-center gap-2 rounded-full border-2 border-metro bg-sign px-4 py-2.5 text-[15px] font-bold text-white transition-transform group-hover:scale-105"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#ff5a52] opacity-75 motion-reduce:animate-none" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#ff5a52]" />
+            </span>
+            Open live map
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fccc0a" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+            </svg>
+          </button>
+        </div>
+        {/* the whole card opens the map too */}
         <div onClick={show} onPointerEnter={() => void loadLiveMap()} className="cursor-zoom-in">
           <SubwayMap riders={riders} />
         </div>
-        <button
-          type="button"
-          onClick={show}
-          className="glow-cta absolute right-3 top-3 flex items-center gap-2 rounded-full border-2 border-metro bg-sign px-4 py-2.5 text-[15px] font-bold text-white transition-transform group-hover:scale-105"
-        >
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#ff5a52] opacity-75 motion-reduce:animate-none" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#ff5a52]" />
-          </span>
-          Open live map
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fccc0a" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
       </div>
       {open && (
         <MapErrorBoundary riders={riders} onClose={hide}>
