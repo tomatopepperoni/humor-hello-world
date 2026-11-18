@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { vote } from "@/app/actions/captions";
@@ -32,6 +33,8 @@ export default function VoteButtons({
   const [local, setLocal] = useState<Counts>({ up: upvotes, down: downvotes, myVote });
   const [seen, setSeen] = useState<Counts>({ up: upvotes, down: downvotes, myVote });
   const [error, setError] = useState<string | null>(null);
+  // A first vote on a caption is one stop in the Race to Columbia: say so where it happens.
+  const [moved, setMoved] = useState(false);
 
   // The same caption can be on screen twice (Top today + Fresh). When the
   // server sends new numbers after a refresh, adopt them.
@@ -64,6 +67,10 @@ export default function VoteButtons({
       }
       // What the database says now, including other people's votes.
       setLocal({ up: res.upvotes ?? 0, down: res.downvotes ?? 0, myVote: res.my_vote ?? 0 });
+      if (prev.myVote === 0 && (res.my_vote ?? 0) !== 0) {
+        setMoved(true);
+        window.setTimeout(() => setMoved(false), 4000);
+      }
       router.refresh();
     });
   }
@@ -112,6 +119,11 @@ export default function VoteButtons({
         {local.up} up, {local.down} down
       </span>
       {error && <span className="mt-1 max-w-40 text-xs text-bullet-red">{error}</span>}
+      {moved && !error && (
+        <Link href="/race" className="mt-1 text-xs font-semibold text-go hover:underline">
+          +1 stop toward Columbia →
+        </Link>
+      )}
     </div>
   );
 }

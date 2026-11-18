@@ -9,6 +9,7 @@ import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { getVoiceMix } from "@/lib/voices";
 import { getPost, getRecentPosts, toMemes, type Meme } from "@/lib/posts";
+import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
 import { DEFAULT_VIBE, VIBE_KEYS, isVibe } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
@@ -56,18 +57,34 @@ export default async function PostPage({ params, searchParams }: PageProps<"/p/[
     .slice(0, 4)
     .map((p) => toMemes(p).sort((a, b) => b.caption.score - a.caption.score || a.caption.position - b.caption.position)[0]);
 
+  // Right after posting: where the post moved its author on the race map.
+  const justPosted = mine && isNew === "1";
+  const rider = justPosted ? (await getRace().catch(() => null))?.riders.find((r) => r.user_id === user?.id) : undefined;
+  const stopsLeft = rider ? Math.max(0, STOPS_TO_COLUMBIA - rider.points_week) : 0;
+
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
       <Link href="/" className="text-sm font-medium text-muted hover:text-ink">
         Back to the feed
       </Link>
 
-      {mine && isNew === "1" && (
+      {justPosted && (
         <div role="status" className="mt-4 rounded-xl bg-sign p-4 text-white sm:p-5">
           <p className="text-lg font-semibold">Your captions are ready.</p>
           <p className="mt-1 text-sm text-white/80">
             Copy the one you like, or send the post to friends so they can vote on it.
           </p>
+          {rider && (
+            <p className="mt-3 text-[15px]">
+              <span className="font-bold text-metro">+2 stops</span> on the 1 train for posting.{" "}
+              {stopsLeft === 0
+                ? "You've reached Columbia this week."
+                : `You're at ${STATIONS[rider.station]}, ${stopsLeft} ${stopsLeft === 1 ? "stop" : "stops"} from Columbia.`}{" "}
+              <Link href="/race" className="font-semibold text-metro underline underline-offset-2">
+                See the race
+              </Link>
+            </p>
+          )}
           <ShareButton
             url={`/p/${post.id}`}
             title="Captioned NYC"

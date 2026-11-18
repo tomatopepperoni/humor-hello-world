@@ -1,5 +1,5 @@
 import Link from "next/link";
-import MemeCard from "@/app/components/MemeCard";
+import PostMeme from "@/app/components/PostMeme";
 import { LineBullet, VibeBullet } from "@/app/components/LineBullet";
 import NextThemeClock from "@/app/components/NextThemeClock";
 import { RaceMini } from "@/app/components/Race";
@@ -9,7 +9,7 @@ import { getCurrentProfile } from "@/lib/profile";
 import { getRecentMemes, getTopMemesToday, type Meme, type PostWithCaptions } from "@/lib/posts";
 import { getWeekPulse, type WeekPulse } from "@/lib/pulse";
 import { getRace, type Race } from "@/lib/race";
-import { VIBES, isVibe, startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
+import { VIBES, type Vibe, isVibe, startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +83,6 @@ export default async function Home() {
   const { long, dayOfMonth } = todayLabelNY();
 
   let recent: PostWithCaptions[] = [];
-  let memes: Meme[] = [];
   let top: Meme[] = [];
   let race: Race | null = null;
   let pulse: WeekPulse | null = null;
@@ -91,12 +90,11 @@ export default async function Home() {
   try {
     const [r, t, rc, pl] = await Promise.all([
       getRecentMemes(12),
-      getTopMemesToday(4),
+      getTopMemesToday(12),
       getRace().catch(() => null),
       getWeekPulse().catch(() => null),
     ]);
     recent = r.posts;
-    memes = r.memes;
     top = t;
     race = rc;
     pulse = pl;
@@ -111,6 +109,18 @@ export default async function Home() {
     : 0;
 
   const postHref = loggedIn ? "/create" : "/login?next=/create";
+
+  // One card per post (week 11: the same photo three times in a row read as duplicates).
+  const feed = recent.filter((p) => p.captions.length > 0);
+  // Top today: a post appears once, on its best caption, ranked by that caption's score.
+  const topPosts: Meme[] = [];
+  for (const m of top) {
+    if (topPosts.length < 4 && !topPosts.some((x) => x.post.id === m.post.id)) topPosts.push(m);
+  }
+  const voicesOf = (p: PostWithCaptions): Vibe[] => {
+    const postVibe = isVibe(p.vibe) ? p.vibe : null;
+    return p.captions.map((c) => c.vibe ?? postVibe).filter((v): v is Vibe => v !== null);
+  };
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
@@ -132,7 +142,7 @@ export default async function Home() {
           </p>
           {!loggedIn && <ExampleCaption />}
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <ActionTile n={1} title="Browse" body="See today's memes from campus." href={top.length ? "#top-today" : "#fresh"} />
+            <ActionTile n={1} title="Browse" body="See today's memes from campus." href={topPosts.length ? "#top-today" : "#fresh"} />
             <ActionTile
               n={2}
               title="Vote"
@@ -173,7 +183,7 @@ export default async function Home() {
             </p>
           )}
 
-          {top.length > 0 && (
+          {topPosts.length > 0 && (
             <section id="top-today" aria-labelledby="top-today-title" className="mb-10 scroll-mt-20">
               <div className="mb-3 flex items-baseline justify-between gap-3">
                 <h2 id="top-today-title" className="text-xl font-bold tracking-tight">
@@ -184,8 +194,8 @@ export default async function Home() {
                 </Link>
               </div>
               <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                {top.map((m, i) => (
-                  <MemeCard key={m.caption.id} meme={m} loggedIn={loggedIn} rank={i + 1} />
+                {topPosts.map((m, i) => (
+                  <PostMeme key={m.post.id} post={m.post} startCaptionId={m.caption.id} loggedIn={loggedIn} rank={i + 1} />
                 ))}
               </div>
             </section>
@@ -196,9 +206,11 @@ export default async function Home() {
               <h2 id="fresh-title" className="text-xl font-bold tracking-tight">
                 Fresh memes
               </h2>
-              {memes.length > 0 && <span className="text-sm text-muted">Newest first. Vote on each caption.</span>}
+              {feed.length > 0 && (
+                <span className="text-sm text-muted">Newest first. Tap ‹ › on a photo to compare its captions.</span>
+              )}
             </div>
-            {memes.length === 0 && !loadError ? (
+            {feed.length === 0 && !loadError ? (
               <div className="rounded-xl border border-dashed bg-card p-8 text-center">
                 <p className="text-[15px]">Nothing posted yet. Be the first one on today&apos;s theme.</p>
                 <Link
@@ -211,10 +223,10 @@ export default async function Home() {
             ) : (
               <VoiceFilter
                 gridClassName="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3"
-                items={memes.map((m) => ({
-                  id: m.caption.id,
-                  vibe: m.caption.vibe ?? (isVibe(m.post.vibe) ? m.post.vibe : null),
-                  node: <MemeCard meme={m} loggedIn={loggedIn} />,
+                items={feed.map((p) => ({
+                  id: p.id,
+                  vibes: voicesOf(p),
+                  node: <PostMeme post={p} loggedIn={loggedIn} />,
                 }))}
               />
             )}
