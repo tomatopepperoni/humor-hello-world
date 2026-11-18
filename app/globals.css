@@ -60,20 +60,6 @@
   }
 }
 
-/* The train that rides along the line while Gemini writes captions. */
-@keyframes ride {
-  0% {
-    left: 0%;
-  }
-  100% {
-    left: calc(100% - 28px);
-  }
-}
-
-.train {
-  animation: ride 2.4s ease-in-out infinite alternate;
-}
-
 /* Subway map: lines draw themselves in once, Columbia's beacon pulses,
    the arrivals board flips rows like a countdown clock. */
 @keyframes draw-line {

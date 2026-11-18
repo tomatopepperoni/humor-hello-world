@@ -19,19 +19,47 @@ const PROGRESS = [
   "Almost there",
 ];
 
-/** Shown while the server action runs: a train riding the line, plus what's happening. */
+/**
+ * Shown while the server action runs: a train riding the line, one stop per step.
+ * The position comes from elapsed time (not a CSS animation), so it still moves
+ * when the browser has "reduce motion" on, and it never runs backwards. It slows
+ * down as it goes and only reaches the end when the captions arrive.
+ */
 function Working({ hasPhoto }: { hasPhoto: boolean }) {
-  const [step, setStep] = useState(0);
+  const [pos, setPos] = useState(0); // 0..1 along the line
   useEffect(() => {
-    const t = window.setInterval(() => setStep((s) => Math.min(s + 1, PROGRESS.length - 1)), 2600);
+    const started = Date.now();
+    const t = window.setInterval(() => {
+      const sec = (Date.now() - started) / 1000;
+      setPos(Math.min(0.96, 1 - Math.exp(-sec / 7)));
+    }, 250);
     return () => window.clearInterval(t);
   }, []);
+  const last = PROGRESS.length - 1;
+  const step = Math.min(last, Math.floor(pos * PROGRESS.length));
   const text = step === 1 && hasPhoto ? "Gemini is looking at your photo" : PROGRESS[step];
   return (
     <div role="status" aria-live="polite" className="rounded-xl bg-sign p-5 text-white">
       <div className="relative h-7">
-        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/25" />
-        <span className="train absolute top-0 flex h-7 w-7 items-center justify-center rounded-full bg-metro text-xs font-bold text-ink">
+        <div className="absolute inset-x-3.5 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/25" />
+        <div
+          className="absolute left-3.5 top-1/2 h-1 -translate-y-1/2 rounded-full bg-metro"
+          style={{ width: `calc((100% - 28px) * ${pos})` }}
+        />
+        {PROGRESS.map((label, i) => (
+          <span
+            key={label}
+            aria-hidden="true"
+            className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 ${
+              i <= step ? "border-metro bg-metro" : "border-white/50 bg-sign"
+            }`}
+            style={{ left: `calc(14px + (100% - 28px) * ${i / last})` }}
+          />
+        ))}
+        <span
+          className="absolute top-0 flex h-7 w-7 items-center justify-center rounded-full bg-metro text-xs font-bold text-ink transition-[left] duration-300 ease-linear"
+          style={{ left: `calc((100% - 28px) * ${pos})` }}
+        >
           C
         </span>
       </div>
