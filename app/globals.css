@@ -140,6 +140,82 @@
   animation: glow-cta 2s ease-in-out infinite;
 }
 
+/* New post: picking a subway voice. The card pops, its bullet spins once, and
+   the platform sign below pulls in on that line's colour. */
+@keyframes voice-pick {
+  0% {
+    transform: scale(0.96);
+  }
+  55% {
+    transform: scale(1.035);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.voice-on {
+  animation: voice-pick 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes voice-bullet {
+  from {
+    transform: rotate(-200deg) scale(0.6);
+  }
+  to {
+    transform: rotate(0) scale(1);
+  }
+}
+
+.voice-bullet {
+  display: inline-flex;
+  animation: voice-bullet 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* a soft sheen crosses the chosen card once */
+.voice-on::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.35) 50%, transparent 65%);
+  transform: translateX(-100%);
+  animation: voice-sheen 700ms ease-out 120ms forwards;
+  pointer-events: none;
+}
+
+@keyframes voice-sheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes board-train {
+  from {
+    transform: translateX(-140%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.board-train {
+  display: inline-flex;
+  animation: board-train 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes board-track {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.board-track {
+  animation: board-track 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

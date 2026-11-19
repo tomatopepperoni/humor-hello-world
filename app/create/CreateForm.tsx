@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { generateCaptions, type GenerateState } from "@/app/actions/captions";
-import { VibeBullet } from "@/app/components/LineBullet";
+import { LineBullet } from "@/app/components/LineBullet";
 import { resizeImage } from "@/lib/resize-image";
 import ServiceAlert from "@/app/components/ServiceAlert";
 import { DEFAULT_VIBE, VIBES, type Vibe } from "@/lib/vibes";
@@ -25,7 +25,8 @@ const PROGRESS = [
  * when the browser has "reduce motion" on, and it never runs backwards. It slows
  * down as it goes and only reaches the end when the captions arrive.
  */
-function Working({ hasPhoto }: { hasPhoto: boolean }) {
+function Working({ hasPhoto, vibe }: { hasPhoto: boolean; vibe: Vibe }) {
+  const line = VIBES[vibe].bullet;
   const [pos, setPos] = useState(0); // 0..1 along the line
   useEffect(() => {
     const started = Date.now();
@@ -43,27 +44,32 @@ function Working({ hasPhoto }: { hasPhoto: boolean }) {
       <div className="relative h-7">
         <div className="absolute inset-x-3.5 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/25" />
         <div
-          className="absolute left-3.5 top-1/2 h-1 -translate-y-1/2 rounded-full bg-metro"
-          style={{ width: `calc((100% - 28px) * ${pos})` }}
+          className="absolute left-3.5 top-1/2 h-1 -translate-y-1/2 rounded-full"
+          style={{ width: `calc((100% - 28px) * ${pos})`, background: line.bg }}
         />
         {PROGRESS.map((label, i) => (
           <span
             key={label}
             aria-hidden="true"
             className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 ${
-              i <= step ? "border-metro bg-metro" : "border-white/50 bg-sign"
+              i <= step ? "" : "border-white/50 bg-sign"
             }`}
-            style={{ left: `calc(14px + (100% - 28px) * ${i / last})` }}
+            style={{
+              left: `calc(14px + (100% - 28px) * ${i / last})`,
+              ...(i <= step ? { borderColor: line.bg, background: line.bg } : {}),
+            }}
           />
         ))}
         <span
-          className="absolute top-0 flex h-7 w-7 items-center justify-center rounded-full bg-metro text-xs font-bold text-ink transition-[left] duration-300 ease-linear"
-          style={{ left: `calc((100% - 28px) * ${pos})` }}
+          className="absolute top-0 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold transition-[left] duration-300 ease-linear"
+          style={{ left: `calc((100% - 28px) * ${pos})`, background: line.bg, color: line.fg, boxShadow: `0 0 14px 2px ${line.bg}` }}
         >
-          C
+          {line.letter}
         </span>
       </div>
-      <p className="mt-3 text-[15px] font-medium">{text}…</p>
+      <p className="mt-3 text-[15px] font-medium">
+        {text}… <span className="text-white/60">on the {VIBES[vibe].label} line</span>
+      </p>
       <p className="mt-0.5 text-sm text-white/70">Usually 5 to 15 seconds. Keep this tab open.</p>
     </div>
   );
@@ -98,6 +104,8 @@ export default function CreateForm({
   const [vibe, setVibe] = useState<Vibe>(voices.includes(DEFAULT_VIBE) ? DEFAULT_VIBE : voices[0]);
 
   const [context, setContext] = useState("");
+  const [shuffling, setShuffling] = useState(false);
+  const line = VIBES[vibe].bullet;
 
   /** Weighted random voice, never the one already picked (weights: admin's prompt chain mix). */
   function surpriseMe() {
@@ -108,7 +116,24 @@ export default function CreateForm({
     const w = (k: Vibe) => (weighted.length > 0 ? weights[k] ?? 0 : 1);
     let r = Math.random() * pool.reduce((sum, k) => sum + w(k), 0);
     const pick = pool.find((k) => (r -= w(k)) < 0) ?? pool[pool.length - 1];
-    setVibe(pick);
+    // Flip through the lines like a departure board, then stop on the pick.
+    if (voices.length < 3 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVibe(pick);
+      return;
+    }
+    setShuffling(true);
+    const from = voices.indexOf(vibe);
+    let i = 0;
+    const t = window.setInterval(() => {
+      i++;
+      if (i >= 8) {
+        window.clearInterval(t);
+        setVibe(pick);
+        setShuffling(false);
+      } else {
+        setVibe(voices[(from + i) % voices.length]);
+      }
+    }, 80);
   }
 
   async function upload(original: File) {
@@ -270,34 +295,79 @@ export default function CreateForm({
               <button
                 type="button"
                 onClick={surpriseMe}
-                className="rounded-full border bg-card px-3 py-1 text-sm font-medium hover:border-ink/40"
+                disabled={shuffling}
+                className="rounded-full border bg-card px-3 py-1 text-sm font-medium transition-transform hover:border-ink/40 active:scale-95"
               >
-                Surprise me
+                {shuffling ? "Shuffling…" : "Surprise me"}
               </button>
             )}
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {voices.map((k) => {
               const on = vibe === k;
+              const c = VIBES[k].bullet;
               return (
                 <label
                   key={k}
-                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-bullet-blue ${
-                    on ? "border-ink bg-ink text-white" : "bg-card hover:border-ink/40"
+                  style={
+                    {
+                      "--line": c.bg,
+                      borderLeftColor: c.bg,
+                      ...(on ? { background: c.bg, color: c.fg, borderColor: c.bg, boxShadow: `0 12px 26px -12px ${c.bg}` } : {}),
+                    } as React.CSSProperties
+                  }
+                  className={`voice-card group/voice relative flex cursor-pointer items-start gap-3 overflow-hidden rounded-xl border border-l-[5px] p-3 transition-[transform,box-shadow,border-color,background-color] duration-200 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink ${
+                    on ? "voice-on z-10" : "bg-card hover:-translate-y-0.5 hover:border-[var(--line)] hover:shadow-[0_8px_18px_-12px_var(--line)]"
                   }`}
                 >
                   <input type="radio" name="vibe" value={k} checked={on} onChange={() => setVibe(k)} className="sr-only" />
-                  <VibeBullet vibe={k} size={30} />
+                  <span className={`transition-transform duration-200 ${on ? "voice-bullet" : "group-hover/voice:rotate-[-8deg] group-hover/voice:scale-110"}`}>
+                    {/* on its own colour the bullet flips: white circle, line-coloured letter */}
+                    <LineBullet letter={c.letter} bg={on ? c.fg : c.bg} fg={on ? c.bg : c.fg} size={30} />
+                  </span>
                   <span className="min-w-0">
-                    <span className="block font-semibold">{VIBES[k].label}</span>
-                    <span className={`block text-sm ${on ? "text-white/75" : "text-muted"}`}>{VIBES[k].blurb}</span>
-                    <span className={`mt-2 block text-[13px] italic leading-snug ${on ? "text-white/90" : "text-ink/70"}`}>
+                    <span className="flex items-center gap-2 font-semibold">
+                      {VIBES[k].label}
+                      {on && (
+                        <span className="rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: c.fg, color: c.bg }}>
+                          Boarding
+                        </span>
+                      )}
+                    </span>
+                    <span className={`block text-sm ${on ? "opacity-85" : "text-muted"}`}>{VIBES[k].blurb}</span>
+                    <span className={`mt-2 block text-[13px] italic leading-snug ${on ? "opacity-95" : "text-ink/70"}`}>
                       {VIBES[k].sample}
                     </span>
                   </span>
                 </label>
               );
             })}
+          </div>
+
+          {/* The chosen line pulls in: a platform sign in that line's colour. */}
+          <div key={vibe} aria-hidden="true" className="mt-3 overflow-hidden rounded-xl bg-sign px-4 pb-4 pt-3 text-white">
+            <div className="flex items-center gap-3">
+              <span className="board-train">
+                <LineBullet letter={line.letter} bg={line.bg} fg={line.fg} size={34} />
+              </span>
+              <p className="min-w-0 leading-tight">
+                <span className="block text-xs text-white/65">Now boarding</span>
+                <span className="block text-[17px] font-bold">The {VIBES[vibe].label} line</span>
+              </p>
+              <p className="ml-auto hidden max-w-[52%] text-right text-[13px] italic leading-snug text-white/80 sm:block">
+                {VIBES[vibe].sample}
+              </p>
+            </div>
+            <div className="relative mt-3 h-1.5">
+              <div className="board-track absolute inset-0 origin-left rounded-full" style={{ background: line.bg }} />
+              {[0, 0.25, 0.5, 0.75, 1].map((x) => (
+                <span
+                  key={x}
+                  className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-sign"
+                  style={{ left: `calc(5px + (100% - 10px) * ${x})`, borderColor: line.bg }}
+                />
+              ))}
+            </div>
           </div>
         </fieldset>
 
@@ -314,15 +384,17 @@ export default function CreateForm({
       {state.error && !submitting && <ServiceAlert error={state.error} busy={!!state.busy} keptInput />}
 
       {submitting ? (
-        <Working hasPhoto={!!imagePath} />
+        <Working hasPhoto={!!imagePath} vibe={vibe} />
       ) : (
         <div>
           <button
             type="submit"
             disabled={!canSubmit}
-            className="w-full rounded-full bg-metro px-5 py-3.5 text-base font-semibold text-ink transition-colors hover:bg-metro-deep disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-muted"
+            style={canSubmit ? { background: line.bg, color: line.fg, boxShadow: `0 10px 24px -12px ${line.bg}` } : undefined}
+            className="flex w-full items-center justify-center gap-2 rounded-full px-5 py-3.5 text-base font-semibold transition-[transform,filter,background-color] duration-200 hover:brightness-95 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-muted"
           >
-            {outOfRuns ? "No caption runs left today" : state.error ? "Try again" : "Write 3 captions"}
+            {canSubmit && <LineBullet letter={line.letter} bg={line.fg} fg={line.bg} size={22} />}
+            {outOfRuns ? "No caption runs left today" : state.error ? "Try again" : `Write 3 ${VIBES[vibe].label} captions`}
           </button>
           <p className="mt-2 text-center text-sm text-muted">
             {!hasInput && !outOfRuns ? "Add a photo or say what happened to continue. " : ""}
