@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { announcementFor } from "@/lib/announce";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
 import { LiveScene, type LiveRider } from "./scene";
+import type { VoiceLine } from "../voice-lines";
 import Fallback2D from "./Fallback2D";
 
 /**
@@ -165,6 +166,7 @@ export default function LiveMap({
   pollUrl,
   onClose,
   transitionName,
+  voices = [],
 }: {
   initialRiders: LiveRider[];
   demo?: boolean;
@@ -172,6 +174,8 @@ export default function LiveMap({
   onClose?: () => void;
   /** view-transition-name, so the race card can grow into the map */
   transitionName?: string;
+  /** the five subway voices and how they're doing this week */
+  voices?: VoiceLine[];
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<LiveScene | null>(null);
@@ -327,6 +331,12 @@ export default function LiveMap({
   const selRider = sel?.kind === "rider" ? riders.find((r) => r.id === sel.id) : undefined;
   const selStation = sel?.kind === "station" ? sel.k : null;
   const atStation = selStation !== null ? sorted.filter((r) => r.station === selStation) : [];
+  // An empty station still leads somewhere: the closest train that has left South Ferry.
+  const nearest =
+    selStation !== null && atStation.length === 0
+      ? [...riders].filter((r) => r.points > 0).sort((a, b) => Math.abs(a.station - selStation) - Math.abs(b.station - selStation))[0]
+      : undefined;
+  const topVoice = Math.max(1, ...voices.map((v) => v.upvotes));
   const ago = Math.max(0, Math.round((now - updatedAt) / 1000));
 
   return (
@@ -411,6 +421,36 @@ export default function LiveMap({
         </div>
       )}
 
+      {/* the five voices as lines: which kind of joke is winning this week */}
+      {ready && !failed && voices.length > 0 && (
+        <div className="absolute right-4 top-[76px] hidden w-64 rounded-2xl border-2 border-ink bg-white p-3.5 shadow-xl lg:block">
+          <p className="text-sm font-bold">Lines this week</p>
+          <p className="mt-1 text-[13px] leading-snug text-muted">Each subway voice is a line. Longer bar, more upvotes on its captions.</p>
+          <ul className="mt-2.5 space-y-2">
+            {voices.map((v) => (
+              <li key={v.key}>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold" style={{ background: v.bg, color: v.fg }}>
+                    {v.letter}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{v.label}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted">{v.upvotes} ▲</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-paper">
+                  <div className="h-1.5 rounded-full" style={{ width: `${Math.max(v.upvotes > 0 ? 6 : 0, (v.upvotes / topVoice) * 100)}%`, background: v.bg }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+          {voices[0]?.best && voices[0].upvotes > 0 && (
+            <Link href={`/p/${voices[0].best.postId}`} className="mt-3 block rounded-xl bg-paper p-2.5 hover:bg-metro/20">
+              <span className="block text-xs font-semibold text-muted">Best on the {voices[0].label} line</span>
+              <span className="mt-0.5 line-clamp-3 block text-[13px] font-semibold leading-snug">{voices[0].best.text}</span>
+            </Link>
+          )}
+        </div>
+      )}
+
       {hint && ready && (
         <p className="pointer-events-none absolute left-1/2 top-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-sign/80 px-3.5 py-1.5 text-xs font-medium text-white">
           Drag to move · scroll to zoom · the ⟲ ⟳ buttons turn the map · tap a train
@@ -442,6 +482,17 @@ export default function LiveMap({
                 </p>
               </div>
             </div>
+          ) : null}
+          {selRider ? (
+            selRider.meme ? (
+              <Link href={`/p/${selRider.meme.postId}#c-${selRider.meme.captionId}`} className="mt-3 block rounded-xl bg-paper p-3 hover:bg-metro/20">
+                <span className="block text-xs font-semibold text-muted">{selRider.me ? "Your" : "Their"} best caption this week</span>
+                <span className="mt-0.5 line-clamp-3 block text-sm font-semibold leading-snug">{selRider.meme.text}</span>
+                <span className="mt-1 block text-xs font-semibold text-bullet-blue">Open the post and vote →</span>
+              </Link>
+            ) : (
+              <p className="mt-3 text-sm text-muted">{selRider.me ? "You haven't" : "Hasn't"} posted this week. This train is moving on votes alone.</p>
+            )
           ) : (
             <div className="pr-6">
               <p className="text-[17px] font-bold">{STATIONS[selStation!]}</p>
@@ -450,15 +501,35 @@ export default function LiveMap({
                 {selStation! < STOPS_TO_COLUMBIA ? ` · ${STOPS_TO_COLUMBIA - selStation!} to Columbia` : ""}
               </p>
               {atStation.length === 0 ? (
-                <p className="mt-2 text-sm">Nobody is here right now.</p>
+                <>
+                  <p className="mt-2 text-sm">Nobody is here right now.</p>
+                  {nearest && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sceneRef.current?.flyToRider(nearest.id);
+                        setSel({ kind: "rider", id: nearest.id });
+                      }}
+                      className="mt-2 text-sm font-semibold text-bullet-blue hover:underline"
+                    >
+                      Nearest train: {nearest.me ? "you" : nearest.name.split(" ")[0]}, at {STATIONS[Math.min(nearest.station, STOPS_TO_COLUMBIA)]} →
+                    </button>
+                  )}
+                </>
               ) : (
-                <ul className="mt-3 flex flex-wrap gap-2">
+                <ul className="mt-3 space-y-2">
                   {atStation.map((r) => (
-                    <li key={r.id}>
-                      <button type="button" onClick={() => { sceneRef.current?.select(r.id); sceneRef.current?.flyToRider(r.id); }} className="flex items-center gap-1.5 rounded-full border bg-paper py-1 pl-1 pr-3 text-sm font-semibold hover:border-ink/40">
+                    <li key={r.id} className="rounded-xl bg-paper p-2.5">
+                      <button type="button" onClick={() => { sceneRef.current?.select(r.id); sceneRef.current?.flyToRider(r.id); }} className="flex items-center gap-1.5 text-sm font-semibold hover:underline">
                         <Face r={r} size={24} />
                         {r.me ? "You" : r.name.split(" ")[0]}
                       </button>
+                      {r.meme && (
+                        <Link href={`/p/${r.meme.postId}#c-${r.meme.captionId}`} className="mt-1.5 block text-sm leading-snug hover:underline">
+                          <span className="line-clamp-2">{r.meme.text}</span>
+                          <span className="text-xs font-semibold text-bullet-blue">Open and vote →</span>
+                        </Link>
+                      )}
                     </li>
                   ))}
                 </ul>

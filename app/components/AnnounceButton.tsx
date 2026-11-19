@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const MUTE_KEY = "captioned-nyc-announcements";
 
-function isMuted(): boolean {
+export function isMuted(): boolean {
   try {
     return window.localStorage.getItem(MUTE_KEY) === "off";
   } catch {
@@ -22,7 +22,7 @@ function setMuted(off: boolean) {
 }
 
 /** The two falling notes a train plays before the doors close, made with the Web Audio API (no audio file). */
-function chime(): Promise<void> {
+export function chime(): Promise<void> {
   return new Promise((resolve) => {
     try {
       const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;

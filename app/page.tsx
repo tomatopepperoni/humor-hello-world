@@ -2,13 +2,21 @@ import Link from "next/link";
 import PostMeme from "@/app/components/PostMeme";
 import { LineBullet, VibeBullet } from "@/app/components/LineBullet";
 import NextThemeClock from "@/app/components/NextThemeClock";
-import { RaceMini } from "@/app/components/Race";
+import ArrivalsBoard from "@/app/components/ArrivalsBoard";
 import VoiceFilter from "@/app/components/VoiceFilter";
 import { PulseCard } from "@/app/components/WeekPulse";
 import { getCurrentProfile } from "@/lib/profile";
-import { getRecentMemes, getTopMemesToday, type Meme, type PostWithCaptions } from "@/lib/posts";
+import {
+  POSTS_SINCE_LIMIT,
+  getPostsSince,
+  getRecentMemes,
+  getTopMemesToday,
+  topMemesToday,
+  type Meme,
+  type PostWithCaptions,
+} from "@/lib/posts";
 import { getWeekPulse, type WeekPulse } from "@/lib/pulse";
-import { getRace, type Race } from "@/lib/race";
+import { getRace, weekStartNY, type Race } from "@/lib/race";
 import { VIBES, type Vibe, isVibe, startOfTodayNY, todayLabelNY, todaysTheme, tomorrowsTheme } from "@/lib/vibes";
 
 export const dynamic = "force-dynamic";
@@ -88,14 +96,16 @@ export default async function Home() {
   let pulse: WeekPulse | null = null;
   let loadError: string | null = null;
   try {
-    const [r, t, rc, pl] = await Promise.all([
+    // The week's posts are loaded once and shared with getWeekPulse (request cache).
+    const [r, week, rc, pl] = await Promise.all([
       getRecentMemes(12),
-      getTopMemesToday(12),
+      getPostsSince(weekStartNY()).catch(() => null),
       getRace().catch(() => null),
       getWeekPulse().catch(() => null),
     ]);
     recent = r.posts;
-    top = t;
+    // Top today comes out of those posts; only a very busy week (list cut off) needs its own query.
+    top = week && week.length < POSTS_SINCE_LIMIT ? topMemesToday(week, 12) : await getTopMemesToday(12);
     race = rc;
     pulse = pl;
   } catch (e) {
@@ -117,6 +127,8 @@ export default async function Home() {
   for (const m of top) {
     if (topPosts.length < 4 && !topPosts.some((x) => x.post.id === m.post.id)) topPosts.push(m);
   }
+  // The week's first rider to reach 116 St gets a mark next to their name in the feed.
+  const winnerId = race?.riders.find((r) => r.arrived_at !== null)?.user_id ?? null;
   const voicesOf = (p: PostWithCaptions): Vibe[] => {
     const postVibe = isVibe(p.vibe) ? p.vibe : null;
     return p.captions.map((c) => c.vibe ?? postVibe).filter((v): v is Vibe => v !== null);
@@ -176,6 +188,8 @@ export default async function Home() {
         </section>
       </section>
 
+      {race && <ArrivalsBoard riders={race.riders} meId={user?.id ?? null} />}
+
       <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-10">
         <div className="min-w-0">
           {loadError && (
@@ -196,7 +210,7 @@ export default async function Home() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                 {topPosts.map((m, i) => (
-                  <PostMeme key={m.post.id} post={m.post} startCaptionId={m.caption.id} loggedIn={loggedIn} rank={i + 1} />
+                  <PostMeme key={m.post.id} post={m.post} startCaptionId={m.caption.id} loggedIn={loggedIn} rank={i + 1} champion={m.post.user_id === winnerId} />
                 ))}
               </div>
             </section>
@@ -227,7 +241,7 @@ export default async function Home() {
                 items={feed.map((p) => ({
                   id: p.id,
                   vibes: voicesOf(p),
-                  node: <PostMeme post={p} loggedIn={loggedIn} />,
+                  node: <PostMeme post={p} loggedIn={loggedIn} champion={p.user_id === winnerId} />,
                 }))}
               />
             )}
@@ -236,7 +250,6 @@ export default async function Home() {
 
         {/* Two small side cards. On phones they sit after the feed. */}
         <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
-          {race && <RaceMini riders={race.riders} meId={user?.id ?? null} />}
           {pulse && <PulseCard pulse={pulse} />}
         </aside>
       </div>

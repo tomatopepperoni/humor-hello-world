@@ -32,6 +32,8 @@ export type LiveRider = {
   station: number;
   points: number;
   me: boolean;
+  /** their best caption this week, shown on the map's cards */
+  meme?: { text: string; postId: string; captionId: string } | null;
 };
 
 export type SceneEvents = {

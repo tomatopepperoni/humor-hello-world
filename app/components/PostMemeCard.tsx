@@ -39,6 +39,7 @@ export default function PostMemeCard({
   startId,
   loggedIn,
   rank,
+  champion = false,
 }: {
   postId: string;
   imageUrl: string | null;
@@ -54,6 +55,7 @@ export default function PostMemeCard({
   startId: string;
   loggedIn: boolean;
   rank?: number;
+  champion?: boolean;
 }) {
   const voice = useContext(ActiveVoiceContext);
   const [sel, setSel] = useState<{ id: string; voice: Vibe | null }>({ id: startId, voice: null });
@@ -136,6 +138,7 @@ export default function PostMemeCard({
         <p className="mt-3 flex items-center gap-1.5 border-t pt-3 text-xs text-muted">
           <Avatar name={authorName} url={authorAvatar} size={18} />
           <span className="font-medium text-ink/80">{authorName}</span>
+          {champion && <LineBullet letter="C" bg="#fccc0a" fg="#16181a" size={16} title="First to Columbia this week" />}
           <time dateTime={createdAt}>{ago}</time>
           {total > 1 && <span className="ml-auto">{total} captions to compare</span>}
         </p>

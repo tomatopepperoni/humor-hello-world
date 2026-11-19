@@ -69,6 +69,8 @@ export default function VoteButtons({
       setLocal({ up: res.upvotes ?? 0, down: res.downvotes ?? 0, myVote: res.my_vote ?? 0 });
       if (prev.myVote === 0 && (res.my_vote ?? 0) !== 0) {
         setMoved(true);
+        // The arrival sign (in the layout) listens for this and looks up the new station.
+        window.dispatchEvent(new Event("captioned:voted"));
         window.setTimeout(() => setMoved(false), 4000);
       }
       router.refresh();

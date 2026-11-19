@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { isUsableCaption, tidyCaption } from "@/lib/caption-text";
 import { isVibe, startOfTodayNY, vibeFromPrompt, type Vibe } from "@/lib/vibes";
@@ -78,9 +79,8 @@ type PostRow = {
 async function hydrate(posts: PostRow[]): Promise<PostWithCaptions[]> {
   if (posts.length === 0) return [];
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Cached per request: the header already asked, so this is not another round trip to Supabase Auth.
+  const { user } = await getCurrentProfile();
 
   const captionIds = posts.flatMap((p) => p.captions.map((c) => c.id));
   const authorIds = Array.from(new Set(posts.map((p) => p.user_id)));
@@ -338,14 +338,32 @@ export async function getTopMemesAllTime(limit = 12): Promise<Meme[]> {
   });
 }
 
-/** Posts created since `iso` (newest first), hydrated. Used for the subway map's traffic. */
-export async function getPostsSince(iso: string, limit = 150): Promise<PostWithCaptions[]> {
+/** The most posts getPostsSince returns. */
+export const POSTS_SINCE_LIMIT = 150;
+
+/**
+ * Posts created since `iso` (newest first), hydrated. Cached per request: the
+ * week's posts feed the arrivals board, the week's numbers, the maps and
+ * "top today", and they should cost one set of queries, not four.
+ */
+export const getPostsSince = cache(async function getPostsSince(iso: string): Promise<PostWithCaptions[]> {
   const supabase = await createClient();
   const { data, error } = await withPostSelect((sel) =>
-    supabase.from("posts").select(sel).gte("created_at", iso).order("created_at", { ascending: false }).limit(limit)
+    supabase.from("posts").select(sel).gte("created_at", iso).order("created_at", { ascending: false }).limit(POSTS_SINCE_LIMIT)
   );
   if (error) throw new Error(error.message);
   return hydrate((data ?? []) as PostRow[]);
+});
+
+/** Today's best memes out of posts that are already loaded (same ranking as getTopMemesToday). */
+export function topMemesToday(posts: PostWithCaptions[], limit = 6): Meme[] {
+  const since = Date.parse(startOfTodayNY());
+  return posts
+    .filter((p) => Date.parse(p.created_at) >= since)
+    .flatMap(toMemes)
+    .filter((m) => m.caption.score > 0)
+    .sort((a, b) => b.caption.score - a.caption.score)
+    .slice(0, limit);
 }
 
 export type VotedMeme = Meme & { voted_at: string };

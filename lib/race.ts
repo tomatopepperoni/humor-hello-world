@@ -129,6 +129,68 @@ export async function getRace(): Promise<Race> {
   return { riders: rank(riders), exact: false, weekStart };
 }
 
+/* ---------- riders as the maps show them ---------- */
+
+/** A rider's best-voted caption this week: what their train "carries" on the live map. */
+export type RiderMeme = { text: string; postId: string; captionId: string };
+
+export type MapRiderData = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  station: number;
+  points: number;
+  me: boolean;
+  meme: RiderMeme | null;
+};
+
+const niceName = (raw: string | null | undefined) => {
+  if (!raw) return "Someone";
+  return raw === raw.toUpperCase() && raw.length > 1 ? raw[0] + raw.slice(1).toLowerCase() : raw;
+};
+
+const MEME_TTL_MS = 60_000;
+let memeCache: { week: string; at: number; best: Map<string, RiderMeme> } | null = null;
+
+/**
+ * Each rider's best caption this week. Not personal (no votes of the viewer in
+ * it), so one copy per server instance is reused for a minute: the live map
+ * polls every 20 seconds and a caption that's a minute old is fine there.
+ */
+async function riderMemes(week: string): Promise<Map<string, RiderMeme>> {
+  if (memeCache && memeCache.week === week && Date.now() - memeCache.at < MEME_TTL_MS) return memeCache.best;
+  const scored = new Map<string, RiderMeme & { score: number }>();
+  const posts = await getPostsSince(week).catch(() => null);
+  if (!posts) return memeCache?.week === week ? memeCache.best : new Map();
+  for (const p of posts) {
+    for (const c of p.captions) {
+      const cur = scored.get(p.user_id);
+      if (!cur || c.score > cur.score) scored.set(p.user_id, { text: c.text, postId: p.id, captionId: c.id, score: c.score });
+    }
+  }
+  const best = new Map<string, RiderMeme>();
+  for (const [id, m] of scored) best.set(id, { text: m.text, postId: m.postId, captionId: m.captionId });
+  memeCache = { week, at: Date.now(), best };
+  return best;
+}
+
+/** The race's riders in the shape both maps and the poll route use. */
+export async function getMapRiders(race: Race, meId: string | null): Promise<MapRiderData[]> {
+  const best = await riderMemes(race.weekStart);
+  return race.riders.map((r) => {
+    const m = best.get(r.user_id);
+    return {
+      id: r.user_id,
+      name: niceName(r.first_name),
+      avatarUrl: r.avatar_url,
+      station: r.station,
+      points: r.points_week,
+      me: r.user_id === meId,
+      meme: m ?? null,
+    };
+  });
+}
+
 /* ---------- badges ---------- */
 
 export type Badge = {
@@ -180,4 +242,15 @@ export async function getLineTraffic(): Promise<Record<Vibe, MapMeme[]>> {
   }
   for (const k of VIBE_KEYS) out[k] = out[k].sort((a, b) => b.score - a.score).slice(0, 12);
   return out;
+}
+
+/**
+ * One rider's points this week, for the arrival sign after a vote. Asks the
+ * view for a single row instead of loading the whole race.
+ */
+export async function getMyStation(userId: string): Promise<{ points: number; station: number } | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("rider_stats").select("points_week").eq("user_id", userId).maybeSingle<{ points_week: number }>();
+  if (error || !data) return null;
+  return { points: data.points_week, station: stationFor(data.points_week) };
 }

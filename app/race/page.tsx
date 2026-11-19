@@ -6,9 +6,11 @@ import { BadgeLegend, BadgeRow, ProgressLine, ordinal, riderStatus } from "@/app
 import { LineBullet } from "@/app/components/LineBullet";
 import { getCurrentProfile } from "@/lib/profile";
 import { announcementFor } from "@/lib/announce";
-import { STATIONS, STOPS_TO_COLUMBIA, getRace } from "@/lib/race";
+import { getWeekPulse } from "@/lib/pulse";
+import { STATIONS, STOPS_TO_COLUMBIA, getMapRiders, getRace } from "@/lib/race";
 import type { MapRider } from "./SubwayMap";
 import RaceMapCard from "./RaceMapCard";
+import { voiceLines } from "./voice-lines";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Race to Columbia" };
@@ -34,14 +36,10 @@ export default async function RacePage({ searchParams }: PageProps<"/race">) {
   const active = race.riders.filter((r) => r.points_week > 0);
   const myRank = me ? active.findIndex((r) => r.user_id === meId) + 1 : 0;
   const left = me ? Math.max(0, STOPS_TO_COLUMBIA - me.points_week) : STOPS_TO_COLUMBIA;
-  const mapRiders: MapRider[] = race.riders.map((r) => ({
-    id: r.user_id,
-    name: displayName(r.first_name),
-    avatarUrl: r.avatar_url,
-    station: r.station,
-    points: r.points_week,
-    me: r.user_id === meId,
-  }));
+  const [mapRiders, pulse]: [MapRider[], Awaited<ReturnType<typeof getWeekPulse>> | null] = await Promise.all([
+    getMapRiders(race, meId),
+    getWeekPulse().catch(() => null),
+  ]);
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
@@ -141,7 +139,7 @@ export default async function RacePage({ searchParams }: PageProps<"/race">) {
             </li>
           ))}
         </ol>
-        <RaceMapCard riders={mapRiders} startOpen={map === "live"} />
+        <RaceMapCard riders={mapRiders} startOpen={map === "live"} voices={pulse ? voiceLines(pulse) : []} />
         {!race.exact && (
           <p className="mt-2 text-xs text-muted">
             Estimated from posts and upvotes. Run supabase/week5.sql to count votes too.

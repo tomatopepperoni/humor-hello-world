@@ -18,6 +18,7 @@ export type MapRider = {
   station: number;
   points: number;
   me: boolean;
+  meme?: { text: string; postId: string; captionId: string } | null;
 };
 
 const LANDMARKS: Record<number, { label: string; icon: string }> = {

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import SubwayMap, { type MapRider } from "./SubwayMap";
 import MapErrorBoundary from "./live/MapErrorBoundary";
+import type { VoiceLine } from "./voice-lines";
 
 // The WebGL map is only downloaded when someone opens it.
 const loadLiveMap = () => import("./live/LiveMap");
@@ -30,7 +31,7 @@ function withTransition(update: () => void) {
  * level 2, the full-screen live map (./live), as an overlay with its own
  * history entry, so the back button closes it.
  */
-export default function RaceMapCard({ riders, startOpen = false }: { riders: MapRider[]; startOpen?: boolean }) {
+export default function RaceMapCard({ riders, startOpen = false, voices = [] }: { riders: MapRider[]; startOpen?: boolean; voices?: VoiceLine[] }) {
   const [open, setOpen] = useState(startOpen);
 
   const show = useCallback(() => {
@@ -103,7 +104,7 @@ export default function RaceMapCard({ riders, startOpen = false }: { riders: Map
       </div>
       {open && (
         <MapErrorBoundary riders={riders} onClose={hide}>
-          <LiveMap initialRiders={riders} pollUrl="/race/riders" onClose={hide} transitionName="race-map" />
+          <LiveMap initialRiders={riders} pollUrl="/race/riders" onClose={hide} transitionName="race-map" voices={voices} />
         </MapErrorBoundary>
       )}
     </>

@@ -9,12 +9,15 @@ export default function PostMeme({
   loggedIn,
   rank,
   startCaptionId,
+  champion = false,
 }: {
   post: PostWithCaptions;
   loggedIn: boolean;
   rank?: number;
   /** open on this caption instead of the best-voted one */
   startCaptionId?: string;
+  /** the author was first to Columbia this week */
+  champion?: boolean;
 }) {
   if (post.captions.length === 0) return null;
   const postVibe = isVibe(post.vibe) ? post.vibe : null;
@@ -40,6 +43,7 @@ export default function PostMeme({
       startId={startCaptionId && ordered.some((c) => c.id === startCaptionId) ? startCaptionId : best.id}
       loggedIn={loggedIn}
       rank={rank}
+      champion={champion}
     />
   );
 }

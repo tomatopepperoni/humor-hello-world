@@ -1,3 +1,4 @@
+import StationArrival from "@/app/components/StationArrival";
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { GeistSans } from "geist/font/sans";
@@ -32,6 +33,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           Skip to content
         </a>
         <Header />
+        <StationArrival />
         <div id="main" className="flex flex-1 flex-col">
           {children}
         </div>
