@@ -750,6 +750,18 @@ export class LiveScene {
     this.flyTo({ x: p.x, y: p.y }, 420);
   }
 
+  /** Turn the camera around the point it is looking at (positive = clockwise seen from above). */
+  rotateBy(deg: number) {
+    this.stopFollow();
+    void this.controls.rotate(THREE.MathUtils.degToRad(deg), 0, !this.reduce);
+  }
+
+  /** Flat = look almost straight down, like a paper map; otherwise the angled 3D view. */
+  setFlat(flat: boolean) {
+    this.stopFollow();
+    void this.controls.rotatePolarTo(THREE.MathUtils.degToRad(flat ? 14 : 56), !this.reduce);
+  }
+
   zoomBy(f: number) {
     this.stopFollow();
     this.controls.dollyTo(clamp(this.controls.distance / f, this.controls.minDistance, this.controls.maxDistance), !this.reduce);
@@ -776,6 +788,11 @@ export class LiveScene {
   setSound(on: boolean) {
     this.sound = on;
     if (on && !this.audio) this.audio = new AudioContext();
+    if (on) {
+      // Browsers start an AudioContext suspended; wake it, then play the chime
+      // right away so switching sound on is audible even when no train is moving.
+      void this.audio?.resume().then(() => this.chime()).catch(() => {});
+    }
   }
 
   /* ------------------------------------------------------------------ effects */
@@ -1085,7 +1102,7 @@ export class LiveScene {
       }
     }
 
-    for (const l of this.stationLabels) l.obj.visible = l.major || dist < 1500;
+    for (const l of this.stationLabels) l.obj.visible = l.major || dist < 2600;
 
     // keep the sun's shadow box around what the camera is looking at
     const tgt = this.controls.getTarget(new THREE.Vector3());

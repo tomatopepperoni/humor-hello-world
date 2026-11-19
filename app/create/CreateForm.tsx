@@ -312,11 +312,10 @@ export default function CreateForm({
                   style={
                     {
                       "--line": c.bg,
-                      borderLeftColor: c.bg,
                       ...(on ? { background: c.bg, color: c.fg, borderColor: c.bg, boxShadow: `0 12px 26px -12px ${c.bg}` } : {}),
                     } as React.CSSProperties
                   }
-                  className={`voice-card group/voice relative flex cursor-pointer items-start gap-3 overflow-hidden rounded-xl border border-l-[5px] p-3 transition-[transform,box-shadow,border-color,background-color] duration-200 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink ${
+                  className={`voice-card group/voice relative flex cursor-pointer items-start gap-3 overflow-hidden rounded-xl border p-3 transition-[transform,box-shadow,border-color,background-color] duration-200 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink ${
                     on ? "voice-on z-10" : "bg-card hover:-translate-y-0.5 hover:border-[var(--line)] hover:shadow-[0_8px_18px_-12px_var(--line)]"
                   }`}
                 >

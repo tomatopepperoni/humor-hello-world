@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { announcementFor } from "@/lib/announce";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
 import { LiveScene, type LiveRider } from "./scene";
 import Fallback2D from "./Fallback2D";
@@ -93,6 +95,24 @@ const I = {
   line: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
       <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+    </svg>
+  ),
+  rotateLeft: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 12a8 8 0 1 1 3 6.2" />
+      <path d="M4 6v6h6" />
+    </svg>
+  ),
+  rotateRight: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 12a8 8 0 1 0-3 6.2" />
+      <path d="M20 6v6h-6" />
+    </svg>
+  ),
+  tilt: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 17 12 7l9 10" />
+      <path d="M7 17h10" />
     </svg>
   ),
   replay: (
@@ -256,7 +276,30 @@ export default function LiveMap({
     return () => window.clearTimeout(id);
   }, [toast]);
 
-  // Keyboard: arrows pan, +/- zoom, F finds you, Esc closes.
+  const [tilted, setTilted] = useState(false);
+
+  // Sound on: the scene chimes, and the browser reads out your next stop.
+  const toggleSound = () => {
+    const on = !sound;
+    setSound(on);
+    sceneRef.current?.setSound(on);
+    try {
+      const synth = window.speechSynthesis;
+      synth?.cancel();
+      if (on && synth) {
+        const u = new SpeechSynthesisUtterance(me ? announcementFor(me.station) : "This is a Columbia-bound 1 train. Vote on a caption to board.");
+        u.lang = "en-US";
+        u.rate = 0.92;
+        u.pitch = 0.9;
+        window.setTimeout(() => synth.speak(u), 600);
+      }
+    } catch {
+      /* no speech on this browser: the chime still plays */
+    }
+  };
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+
+  // Keyboard: arrows pan, +/- zoom, Q/E rotate, F finds you, Esc closes.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const s = sceneRef.current;
@@ -272,6 +315,8 @@ export default function LiveMap({
       else if (e.key === "+" || e.key === "=") s.zoomBy(1.3);
       else if (e.key === "-" || e.key === "_") s.zoomBy(1 / 1.3);
       else if (e.key.toLowerCase() === "f") s.findMe();
+      else if (e.key.toLowerCase() === "q") s.rotateBy(-30);
+      else if (e.key.toLowerCase() === "e") s.rotateBy(30);
       else return;
       e.preventDefault();
     };
@@ -317,7 +362,7 @@ export default function LiveMap({
           <span className="hidden text-xs text-white/60 sm:inline">{ago < 10 ? "updated just now" : `updated ${ago}s ago`}</span>
         </div>
         <div className="pointer-events-auto flex items-center gap-2">
-          <Btn label={sound ? "Sound on" : "Sound off"} active={sound} onClick={() => { const v = !sound; setSound(v); sceneRef.current?.setSound(v); }}>
+          <Btn label={sound ? "Sound on" : "Sound off"} active={sound} onClick={toggleSound}>
             {sound ? I.soundOn : I.soundOff}
           </Btn>
           {onClose && (
@@ -328,9 +373,47 @@ export default function LiveMap({
         </div>
       </div>
 
+      {/* what the map is for + who is where (desktop; phones keep the map clear) */}
+      {ready && !failed && (
+        <div className="absolute left-4 top-[76px] hidden w-64 rounded-2xl border-2 border-ink bg-white p-3.5 shadow-xl md:block">
+          <p className="text-sm font-bold">This week&apos;s scoreboard</p>
+          <p className="mt-1 text-[13px] leading-snug text-muted">
+            Each train is a classmate on the 1 line. A vote is one stop uptown, a post is two. First to Columbia wins the week.
+          </p>
+          {sorted.some((r) => r.points > 0) ? (
+            <ol className="mt-2.5 space-y-0.5">
+              {sorted
+                .filter((r) => r.points > 0)
+                .slice(0, 5)
+                .map((r, i) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sceneRef.current?.flyToRider(r.id);
+                        setSel({ kind: "rider", id: r.id });
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left text-sm hover:bg-paper ${r.me ? "bg-metro/20" : ""}`}
+                    >
+                      <span className="w-4 text-right font-bold tabular-nums">{i + 1}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{r.me ? "You" : r.name}</span>
+                      <span className="shrink-0 text-xs text-muted">{STATIONS[Math.min(r.station, STOPS_TO_COLUMBIA)]}</span>
+                    </button>
+                  </li>
+                ))}
+            </ol>
+          ) : (
+            <p className="mt-2.5 text-sm">Nobody has left South Ferry yet.</p>
+          )}
+          <Link href="/#fresh" className="mt-2.5 block rounded-full bg-metro px-3 py-1.5 text-center text-sm font-semibold text-ink hover:bg-metro-deep">
+            Vote to move your train
+          </Link>
+        </div>
+      )}
+
       {hint && ready && (
         <p className="pointer-events-none absolute left-1/2 top-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-sign/80 px-3.5 py-1.5 text-xs font-medium text-white">
-          Drag to move · pinch or scroll to zoom · tap a train
+          Drag to move · scroll to zoom · the ⟲ ⟳ buttons turn the map · tap a train
         </p>
       )}
 
@@ -401,6 +484,23 @@ export default function LiveMap({
           <Btn label="Replay the week" onClick={() => sceneRef.current?.replay()}>
             {I.replay}
             <span className="hidden sm:inline">Replay</span>
+          </Btn>
+          <span className="mx-0.5 h-6 w-px bg-white/20" aria-hidden="true" />
+          <Btn label="Turn the map left" onClick={() => sceneRef.current?.rotateBy(-30)}>
+            {I.rotateLeft}
+          </Btn>
+          <Btn label="Turn the map right" onClick={() => sceneRef.current?.rotateBy(30)}>
+            {I.rotateRight}
+          </Btn>
+          <Btn
+            label={tilted ? "Back to the 3D view" : "Look straight down"}
+            active={tilted}
+            onClick={() => {
+              sceneRef.current?.setFlat(!tilted);
+              setTilted(!tilted);
+            }}
+          >
+            {I.tilt}
           </Btn>
           <span className="mx-0.5 h-6 w-px bg-white/20" aria-hidden="true" />
           <Btn label="Zoom out" onClick={() => sceneRef.current?.zoomBy(1 / 1.4)}>
