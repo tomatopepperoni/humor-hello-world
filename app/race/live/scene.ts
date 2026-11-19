@@ -129,6 +129,8 @@ export class LiveScene {
   private selected: string | null = null;
   private sound = false;
   private audio: AudioContext | null = null;
+  /** radians per second the camera is turning (held button, or the 360° tour) */
+  private spin = 0;
   private time = 0;
   private destroyed = false;
   private resizeObs: ResizeObserver;
@@ -758,6 +760,18 @@ export class LiveScene {
     void this.controls.rotate(THREE.MathUtils.degToRad(deg), 0, !this.reduce);
   }
 
+  /** Trackpad swipe / fine control: turn by an exact amount, no easing. */
+  rotateRad(rad: number) {
+    this.stopFollow();
+    void this.controls.rotate(rad, 0, false);
+  }
+
+  /** Keep turning at this speed (radians per second) until set back to 0. */
+  setSpin(speed: number) {
+    if (speed !== 0) this.stopFollow();
+    this.spin = speed;
+  }
+
   /** Flat = look almost straight down, like a paper map; otherwise the angled 3D view. */
   setFlat(flat: boolean) {
     this.stopFollow();
@@ -1120,6 +1134,7 @@ export class LiveScene {
       sc.updateProjectionMatrix();
     }
 
+    if (this.spin !== 0) void this.controls.rotate(this.spin * Math.min(raw, 0.05), 0, false);
     this.controls.update(Math.min(raw, 0.25));
     if (this.time - this.lightCheck > 5) this.applyLight();
     this.dio.update(this.time, this.night, motion);

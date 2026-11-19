@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { vote } from "@/app/actions/captions";
 import { announcementFor } from "@/lib/announce";
+import { VIBES, VIBE_KEYS } from "@/lib/vibes";
+import type { RideStop } from "../ride/route";
 import { STATIONS, STOPS_TO_COLUMBIA } from "@/lib/line1";
 import { LiveScene, type LiveRider } from "./scene";
 import type { VoiceLine } from "../voice-lines";
@@ -86,6 +89,59 @@ function Btn({ onClick, children, label, active = false }: { onClick: () => void
   );
 }
 
+/** Radians per second for the 360° tour. */
+const ORBIT_SPEED = 0.3;
+
+/**
+ * Turn button: a tap turns 30°, holding it keeps the map turning. `rest` is the
+ * speed to go back to on release (the 360° tour may be running).
+ */
+function HoldBtn({
+  dir,
+  label,
+  scene,
+  rest,
+  children,
+}: {
+  dir: 1 | -1;
+  label: string;
+  scene: React.RefObject<LiveScene | null>;
+  rest: number;
+  children: React.ReactNode;
+}) {
+  const downAt = useRef(0);
+  const release = (tap: boolean) => {
+    if (downAt.current === 0) return;
+    const held = Date.now() - downAt.current;
+    downAt.current = 0;
+    scene.current?.setSpin(rest);
+    if (tap && held < 220) scene.current?.rotateBy(dir * 30);
+  };
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        downAt.current = Date.now();
+        scene.current?.setSpin(dir * 1.2);
+      }}
+      onPointerUp={() => release(true)}
+      onPointerCancel={() => release(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          scene.current?.rotateBy(dir * 30);
+        }
+      }}
+      className="flex h-10 touch-none select-none items-center justify-center rounded-full bg-white px-3.5 text-sm font-semibold text-ink transition-colors hover:bg-paper active:bg-metro"
+    >
+      {children}
+    </button>
+  );
+}
+
 const I = {
   me: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
@@ -151,6 +207,32 @@ const I = {
   ),
 };
 
+/** Ride mode: vote on one caption per station; every vote is one stop uptown. */
+type Ride = {
+  queue: RideStop[];
+  i: number;
+  phase: "loading" | "ask" | "moving" | "empty" | "signin" | "arrived";
+  error?: string | null;
+};
+
+/** Demo mode's ride: the sample line of each voice, three times over. */
+function demoStops(): RideStop[] {
+  return [0, 1, 2].flatMap((round) =>
+    VIBE_KEYS.map((k) => {
+      const b = VIBES[k].bullet;
+      return {
+        captionId: `demo-${round}-${k}`,
+        postId: "demo",
+        text: VIBES[k].sample,
+        imageUrl: null,
+        context: "45 minutes in line at Levain for one cookie",
+        author: ["Grace", "Jonah", "Priya"][round],
+        voice: { label: VIBES[k].label, letter: b.letter, bg: b.bg, fg: b.fg },
+      };
+    })
+  );
+}
+
 /** Demo mode: a dozen made-up riders, so the map can be tried without data. */
 export function demoRiders(withMe = true): LiveRider[] {
   const names = ["Alex Park", "Timothy Chen", "Jonah Weiss", "Chloe Lee", "Priya Shah", "Diego Ramos", "Sofia Rossi", "Ken Ito", "Maya Cohen", "Leo Martin", "Ava Brooks", "Noah Kim"];
@@ -192,13 +274,20 @@ export default function LiveMap({
 
   const sorted = useMemo(() => [...riders].sort((a, b) => b.points - a.points), [riders]);
   const me = riders.find((r) => r.me);
+  // Riders who haven't scored this week all sit at South Ferry; drawing 25 trains
+  // on one platform is a pile of labels, so the map shows the ones that have left (and you).
+  const onMap = useMemo(() => riders.filter((r) => r.points > 0 || r.me), [riders]);
+  const [ride, setRide] = useState<Ride | null>(null);
+  const [orbit, setOrbit] = useState(false);
+  /** your points can't drop below this while a poll catches up with a vote just cast */
+  const rideFloor = useRef(0);
 
   // Mount the WebGL scene once.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     let alive = true;
-    LiveScene.create(host, initialRiders, {
+    LiveScene.create(host, initialRiders.filter((r) => r.points > 0 || r.me), {
       onSelectRider: (id) => setSel({ kind: "rider", id }),
       onSelectStation: (k) => setSel({ kind: "station", k }),
       onArrive: (r) => setToast(`🎓 ${r.me ? "You" : r.name.split(" ")[0]} made it to Columbia!`),
@@ -228,8 +317,25 @@ export default function LiveMap({
 
   // New data → the scene moves the trains that scored.
   useEffect(() => {
-    if (ready) sceneRef.current?.setRiders(riders);
-  }, [riders, ready]);
+    if (ready) sceneRef.current?.setRiders(onMap);
+  }, [onMap, ready]);
+
+  // Trackpads have no right-drag: a sideways two-finger swipe turns the map.
+  // Caught on the way down to the canvas, so the camera doesn't also zoom on it.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return; // pinch-zoom
+      if (Math.abs(e.deltaX) > 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5) {
+        e.preventDefault();
+        e.stopPropagation();
+        sceneRef.current?.rotateRad(e.deltaX * 0.004);
+      }
+    };
+    host.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    return () => host.removeEventListener("wheel", onWheel, { capture: true });
+  }, []);
 
   // Live data: poll the riders endpoint (votes are private per user, so Realtime can't see them).
   useEffect(() => {
@@ -240,7 +346,8 @@ export default function LiveMap({
         const res = await fetch(pollUrl, { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as { riders: LiveRider[] };
-        setRiders(data.riders);
+        const floor = rideFloor.current;
+        setRiders(data.riders.map((r) => (r.me && r.points < floor ? { ...r, points: floor, station: Math.min(floor, STOPS_TO_COLUMBIA) } : r)));
         setUpdatedAt(Date.now());
       } catch {
         /* keep the last good data */
@@ -282,25 +389,88 @@ export default function LiveMap({
 
   const [tilted, setTilted] = useState(false);
 
+  const say = (text: string, delay = 600) => {
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-US";
+      u.rate = 0.92;
+      u.pitch = 0.9;
+      window.setTimeout(() => synth.speak(u), delay);
+    } catch {
+      /* no speech on this browser: the chime still plays */
+    }
+  };
+
   // Sound on: the scene chimes, and the browser reads out your next stop.
   const toggleSound = () => {
     const on = !sound;
     setSound(on);
     sceneRef.current?.setSound(on);
+    if (on) say(me ? announcementFor(me.station) : "This is a Columbia-bound 1 train. Vote on a caption to board.");
+    else window.speechSynthesis?.cancel();
+  };
+
+  const stopOrbit = () => {
+    setOrbit(false);
+    sceneRef.current?.setSpin(0);
+  };
+
+  /* ---- Ride mode ---- */
+  const startRide = async () => {
+    setSel(null);
+    setHint(false);
+    stopOrbit();
+    if (!me) return setRide({ queue: [], i: 0, phase: "signin" });
+    sceneRef.current?.findMe();
+    if (me.station >= STOPS_TO_COLUMBIA) return setRide({ queue: [], i: 0, phase: "arrived" });
+    if (demo) return setRide({ queue: demoStops(), i: 0, phase: "ask" });
+    setRide({ queue: [], i: 0, phase: "loading" });
     try {
-      const synth = window.speechSynthesis;
-      synth?.cancel();
-      if (on && synth) {
-        const u = new SpeechSynthesisUtterance(me ? announcementFor(me.station) : "This is a Columbia-bound 1 train. Vote on a caption to board.");
-        u.lang = "en-US";
-        u.rate = 0.92;
-        u.pitch = 0.9;
-        window.setTimeout(() => synth.speak(u), 600);
-      }
+      const res = await fetch("/race/ride", { cache: "no-store" });
+      const data = (await res.json()) as { signedIn: boolean; queue: RideStop[] };
+      if (!data.signedIn) setRide({ queue: [], i: 0, phase: "signin" });
+      else setRide({ queue: data.queue, i: 0, phase: data.queue.length > 0 ? "ask" : "empty" });
     } catch {
-      /* no speech on this browser: the chime still plays */
+      setRide({ queue: [], i: 0, phase: "empty", error: "The captions didn't load. Try again in a moment." });
     }
   };
+
+  const castRide = async (value: 1 | -1) => {
+    if (!ride || ride.phase !== "ask" || !me) return;
+    const stop = ride.queue[ride.i];
+    setRide({ ...ride, phase: "moving", error: null });
+    if (!demo) {
+      const res = await vote(stop.captionId, value).catch(() => ({ error: "The vote didn't go through. Try again." }));
+      if (res.error) return setRide({ ...ride, phase: "ask", error: res.error });
+    }
+    // One vote, one stop: move your train now; the next poll will agree.
+    const points = me.points + 1;
+    const next = Math.min(points, STOPS_TO_COLUMBIA);
+    rideFloor.current = points;
+    setRiders((list) => list.map((r) => (r.me ? { ...r, points, station: next } : r)));
+    setUpdatedAt(Date.now());
+    sceneRef.current?.findMe();
+    if (sound) say(announcementFor(next - 1), 200);
+    window.setTimeout(() => {
+      setRide((cur) => {
+        if (!cur) return cur;
+        if (next >= STOPS_TO_COLUMBIA) return { ...cur, phase: "arrived" };
+        const i = cur.i + 1;
+        return { ...cur, i, phase: i < cur.queue.length ? "ask" : "empty" };
+      });
+    }, 1800);
+  };
+
+  const skipRide = () =>
+    setRide((cur) => {
+      if (!cur || cur.phase !== "ask") return cur;
+      const i = cur.i + 1;
+      return { ...cur, i, phase: i < cur.queue.length ? "ask" : "empty", error: null };
+    });
+
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   // Keyboard: arrows pan, +/- zoom, Q/E rotate, F finds you, Esc closes.
@@ -453,7 +623,7 @@ export default function LiveMap({
 
       {hint && ready && (
         <p className="pointer-events-none absolute left-1/2 top-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-sign/80 px-3.5 py-1.5 text-xs font-medium text-white">
-          Drag to move · scroll to zoom · the ⟲ ⟳ buttons turn the map · tap a train
+          Drag to move · scroll to zoom · swipe sideways with two fingers, or hold ⟲ ⟳, to turn
         </p>
       )}
 
@@ -464,7 +634,7 @@ export default function LiveMap({
       )}
 
       {/* detail card */}
-      {(selRider || selStation !== null) && (
+      {!ride && (selRider || selStation !== null) && (
         <div className="absolute inset-x-3 bottom-[calc(76px+env(safe-area-inset-bottom))] mx-auto max-w-sm rounded-2xl border-2 border-ink bg-white p-4 shadow-xl sm:inset-x-auto sm:bottom-6 sm:left-4">
           <button type="button" onClick={() => setSel(null)} aria-label="Close" className="absolute right-2.5 top-2.5 rounded-full p-1 text-muted hover:bg-paper hover:text-ink">
             {I.close}
@@ -518,7 +688,7 @@ export default function LiveMap({
                 </>
               ) : (
                 <ul className="mt-3 space-y-2">
-                  {atStation.map((r) => (
+                  {atStation.slice(0, 5).map((r) => (
                     <li key={r.id} className="rounded-xl bg-paper p-2.5">
                       <button type="button" onClick={() => { sceneRef.current?.select(r.id); sceneRef.current?.flyToRider(r.id); }} className="flex items-center gap-1.5 text-sm font-semibold hover:underline">
                         <Face r={r} size={24} />
@@ -532,8 +702,100 @@ export default function LiveMap({
                       )}
                     </li>
                   ))}
+                  {atStation.length > 5 && (
+                    <li className="px-1 text-sm text-muted">
+                      +{atStation.length - 5} more {selStation === 0 ? "waiting to board" : "here"}
+                    </li>
+                  )}
                 </ul>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Ride mode: one caption per station, a vote moves the train */}
+      {ride && (
+        <div className="absolute inset-x-3 bottom-[calc(72px+env(safe-area-inset-bottom))] mx-auto max-w-lg overflow-hidden rounded-2xl border-2 border-ink bg-white shadow-2xl sm:bottom-[92px]">
+          <div className="flex items-center gap-2.5 bg-sign px-4 py-2.5 text-white">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bullet-red text-[15px] font-bold">1</span>
+            <p className="min-w-0 flex-1 leading-tight">
+              <span className="block text-[11px] text-white/65">{ride.phase === "moving" ? "Next stop" : ride.phase === "arrived" ? "Last stop" : "This stop"}</span>
+              <span className="block truncate text-[15px] font-bold">{STATIONS[Math.min(me?.station ?? 0, STOPS_TO_COLUMBIA)]}</span>
+            </p>
+            {me && me.station < STOPS_TO_COLUMBIA && (
+              <span className="shrink-0 text-xs tabular-nums text-white/70">{STOPS_TO_COLUMBIA - me.station} to Columbia</span>
+            )}
+            <button type="button" onClick={() => setRide(null)} aria-label="End the ride" className="rounded-full p-1 text-white/80 hover:bg-white/15 hover:text-white">
+              {I.close}
+            </button>
+          </div>
+
+          {ride.phase === "ask" && ride.queue[ride.i] && (
+            <>
+              <div className="flex gap-3 p-4">
+                {ride.queue[ride.i].imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={ride.queue[ride.i].imageUrl!} alt={ride.queue[ride.i].context ?? "Photo from the post"} className="h-24 w-24 shrink-0 rounded-xl bg-paper object-cover" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[17px] font-semibold leading-snug">
+                    {ride.queue[ride.i].voice && (
+                      <span
+                        title={ride.queue[ride.i].voice!.label}
+                        className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full align-[-3px] text-[11px] font-bold"
+                        style={{ background: ride.queue[ride.i].voice!.bg, color: ride.queue[ride.i].voice!.fg }}
+                      >
+                        {ride.queue[ride.i].voice!.letter}
+                      </span>
+                    )}
+                    {ride.queue[ride.i].text}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-xs text-muted">
+                    {ride.queue[ride.i].author}
+                    {ride.queue[ride.i].context ? ` · ${ride.queue[ride.i].context}` : ""}
+                  </p>
+                </div>
+              </div>
+              {ride.error && <p className="px-4 pb-2 text-sm text-bullet-red">{ride.error}</p>}
+              <div className="flex items-center gap-2 border-t px-4 py-3">
+                <button type="button" onClick={() => void castRide(1)} className="h-11 flex-1 rounded-full bg-go text-[15px] font-bold text-white hover:brightness-95 active:scale-[0.98]">
+                  ▲ Funny
+                </button>
+                <button type="button" onClick={() => void castRide(-1)} className="h-11 flex-1 rounded-full bg-hold text-[15px] font-bold text-white hover:brightness-95 active:scale-[0.98]">
+                  ▼ Not funny
+                </button>
+                <button type="button" onClick={skipRide} className="px-2 text-sm font-medium text-muted hover:text-ink">
+                  Skip
+                </button>
+              </div>
+              <p className="px-4 pb-3 text-xs text-muted">Either vote closes the doors and takes you one stop uptown.</p>
+            </>
+          )}
+          {ride.phase === "moving" && <p className="p-5 text-center text-[15px] font-semibold">Stand clear of the closing doors…</p>}
+          {ride.phase === "loading" && <p className="p-5 text-center text-[15px]">Loading captions for your ride…</p>}
+          {ride.phase === "empty" && (
+            <div className="p-4">
+              <p className="text-[15px] font-semibold">{ride.error ?? "You've voted on everything that's out there."}</p>
+              <p className="mt-1 text-sm text-muted">Post a moment of your own to keep moving: a post is two stops.</p>
+              <Link href="/create" className="mt-3 inline-block rounded-full bg-metro px-4 py-2 text-sm font-semibold text-ink hover:bg-metro-deep">
+                Post a moment
+              </Link>
+            </div>
+          )}
+          {ride.phase === "signin" && (
+            <div className="p-4">
+              <p className="text-[15px] font-semibold">Sign in to ride.</p>
+              <p className="mt-1 text-sm text-muted">Your train moves one stop for every caption you vote on.</p>
+              <Link href="/login?next=%2Frace%3Fmap%3Dlive" className="mt-3 inline-block rounded-full bg-metro px-4 py-2 text-sm font-semibold text-ink hover:bg-metro-deep">
+                Sign in
+              </Link>
+            </div>
+          )}
+          {ride.phase === "arrived" && (
+            <div className="p-4">
+              <p className="text-[17px] font-bold">🎓 You made it to Columbia this week.</p>
+              <p className="mt-1 text-sm text-muted">Everyone restarts at South Ferry on Monday. Your votes still count for badges.</p>
             </div>
           )}
         </div>
@@ -542,37 +804,60 @@ export default function LiveMap({
       {/* controls */}
       <div className="absolute inset-x-0 bottom-0 flex justify-center p-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:p-5">
         <div className="flex items-center gap-1.5 rounded-full bg-sign p-1.5 shadow-xl">
+          <button
+            type="button"
+            onClick={() => (ride ? setRide(null) : void startRide())}
+            aria-pressed={!!ride}
+            className="glow-cta flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full bg-metro px-4 text-sm font-bold text-ink hover:bg-metro-deep"
+          >
+            {ride ? "End ride" : "Ride the 1"}
+          </button>
           {me && (
             <Btn label="Find my train" active={following} onClick={() => sceneRef.current?.findMe()}>
               {I.me}
-              <span className="hidden sm:inline">{following ? "Following you" : "Find my train"}</span>
+              <span className="hidden lg:inline">{following ? "Following you" : "Find my train"}</span>
             </Btn>
           )}
           <Btn label="Whole line" onClick={() => sceneRef.current?.wholeLine()}>
             {I.line}
-            <span className="hidden sm:inline">Whole line</span>
+            <span className="hidden lg:inline">Whole line</span>
           </Btn>
-          <Btn label="Replay the week" onClick={() => sceneRef.current?.replay()}>
-            {I.replay}
-            <span className="hidden sm:inline">Replay</span>
-          </Btn>
+          <span className="hidden sm:contents">
+            <Btn label="Replay the week" onClick={() => sceneRef.current?.replay()}>
+              {I.replay}
+              <span className="hidden lg:inline">Replay</span>
+            </Btn>
+          </span>
           <span className="mx-0.5 h-6 w-px bg-white/20" aria-hidden="true" />
-          <Btn label="Turn the map left" onClick={() => sceneRef.current?.rotateBy(-30)}>
+          <HoldBtn label="Turn left (hold to keep turning)" dir={-1} scene={sceneRef} rest={orbit ? ORBIT_SPEED : 0}>
             {I.rotateLeft}
-          </Btn>
-          <Btn label="Turn the map right" onClick={() => sceneRef.current?.rotateBy(30)}>
+          </HoldBtn>
+          <HoldBtn label="Turn right (hold to keep turning)" dir={1} scene={sceneRef} rest={orbit ? ORBIT_SPEED : 0}>
             {I.rotateRight}
-          </Btn>
+          </HoldBtn>
           <Btn
-            label={tilted ? "Back to the 3D view" : "Look straight down"}
-            active={tilted}
+            label={orbit ? "Stop the 360° tour" : "360° tour: circle the map"}
+            active={orbit}
             onClick={() => {
-              sceneRef.current?.setFlat(!tilted);
-              setTilted(!tilted);
+              const on = !orbit;
+              setOrbit(on);
+              sceneRef.current?.setSpin(on ? ORBIT_SPEED : 0);
             }}
           >
-            {I.tilt}
+            <span className="text-[13px] font-bold tabular-nums">360°</span>
           </Btn>
+          <span className="hidden sm:contents">
+            <Btn
+              label={tilted ? "Back to the 3D view" : "Look straight down"}
+              active={tilted}
+              onClick={() => {
+                sceneRef.current?.setFlat(!tilted);
+                setTilted(!tilted);
+              }}
+            >
+              {I.tilt}
+            </Btn>
+          </span>
           <span className="mx-0.5 h-6 w-px bg-white/20" aria-hidden="true" />
           <Btn label="Zoom out" onClick={() => sceneRef.current?.zoomBy(1 / 1.4)}>
             {I.minus}
